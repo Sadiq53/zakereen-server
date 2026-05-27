@@ -8,6 +8,7 @@ const allowedTypes = [
 
 // Role hierarchy: higher number = higher privilege
 const ROLE_HIERARCHY = {
+    rootadmin: 5,
     superadmin: 4,
     admin: 3,
     groupadmin: 2,
@@ -19,6 +20,7 @@ const ALL_ROLES = Object.keys(ROLE_HIERARCHY);
 
 // Roles that can manage users/groups (excludes member)
 const allowedRoles = [
+    'rootadmin',
     'superadmin',
     'admin',
     'groupadmin',
@@ -26,6 +28,7 @@ const allowedRoles = [
 
 // Roles that can manage groups (same as allowedRoles — admin-level and above)
 const roles_for_group = [
+    'rootadmin',
     'superadmin',
     'admin',
     'groupadmin',

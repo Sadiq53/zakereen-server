@@ -9,8 +9,8 @@ const { dispatchNotification } = require('../utils/fcmUtils');
 const AppError = require('../utils/AppError');
 const { scheduleOccasionJobs, rescheduleOccasionJobs, cancelOccasionJobs } = require('../jobs/bullQueue');
 
-async function markAttendance(userId, occasionId, status) {
-    const occasion = await occasionClient.findById(occasionId);
+async function markAttendance(tenantId, userId, occasionId, status) {
+    const occasion = await occasionClient.findOne({ _id: occasionId, tenantId });
     
     const hasStartedByTime = occasion && occasion.start_at && new Date(occasion.start_at) <= new Date();
     if (!occasion || (occasion.status !== 'started' && !hasStartedByTime)) {
@@ -20,14 +20,14 @@ async function markAttendance(userId, occasionId, status) {
     const now = new Date();
 
     const attendance = await attendanceClient.findOneAndUpdate(
-        { user: userId, occasion: occasionId },
+        { tenantId, user: userId, occasion: occasionId },
         { checkedInAt: now, status, updatedAt: now },
         { upsert: true, new: true }
     );
     return attendance;
 }
 
-exports.createOccasion = async (occasionData) => {
+exports.createOccasion = async (tenantId, occasionData) => {
     const {
         name,
         start_at: startAtIso,
@@ -38,6 +38,8 @@ exports.createOccasion = async (occasionData) => {
         hijri_date,
         description,
     } = occasionData;
+    console.log(JSON.stringify(occasionData));
+    
 
     const startDateOnly = new Date(startAtIso);
     if (isNaN(startDateOnly)) {
@@ -66,6 +68,7 @@ exports.createOccasion = async (occasionData) => {
         start_at: startDateOnly,
         ends_at,
         events,
+        tenantId,
         createdAt: new Date(),
         updatedAt: new Date(),
     };
@@ -90,7 +93,7 @@ exports.createOccasion = async (occasionData) => {
 exports.updateOccasion = async (caller, id, updateData) => {
     const forbiddenFields = ['created_by'];
 
-    if (!['superadmin', 'admin'].includes(caller.role)) {
+    if (!isAtLeast(caller.role, 'admin')) {
         forbiddenFields.push('start_at');
     }
 
@@ -100,7 +103,7 @@ exports.updateOccasion = async (caller, id, updateData) => {
         }
     }
 
-    const occasion = await occasionClient.findById(id);
+    const occasion = await occasionClient.findOne({ _id: id, tenantId: caller.tenantId });
     if (!occasion) {
         throw new AppError('Occasion not found', 404);
     }
@@ -112,7 +115,7 @@ exports.updateOccasion = async (caller, id, updateData) => {
             const now = new Date();
             const bulkOps = updateData.attendance.map(attendee => ({
                 updateOne: {
-                    filter: { user: attendee.userId, occasion: id },
+                    filter: { tenantId: caller.tenantId, user: attendee.userId, occasion: id },
                     update: { $set: { checkedInAt: now, status: attendee.status, updatedAt: now } },
                     upsert: true
                 }
@@ -121,6 +124,7 @@ exports.updateOccasion = async (caller, id, updateData) => {
             await attendanceClient.bulkWrite(bulkOps);
             
             const updatedRecords = await attendanceClient.find({
+                tenantId: caller.tenantId,
                 occasion: id,
                 user: { $in: updateData.attendance.map(a => a.userId) }
             });
@@ -130,6 +134,13 @@ exports.updateOccasion = async (caller, id, updateData) => {
         const presentUserIds = updateData.attendance
             .filter((val) => val.status === "present" && val.userId)
             .map((val) => val.userId.toString());
+
+        const nonPresentUserIds = updateData.attendance
+            .filter((val) => val.status !== "present" && val.userId)
+            .map((val) => val.userId.toString());
+
+        // Remove non-present users
+        attendees = attendees.filter(a => !nonPresentUserIds.includes(a.toString()));
 
         const existingUserIds = attendees.map((a) => a.toString());
 
@@ -211,8 +222,8 @@ exports.updateOccasion = async (caller, id, updateData) => {
     return updatedDoc;
 };
 
-exports.endOccasion = async (id) => {
-    const occasion = await occasionClient.findById(id);
+exports.endOccasion = async (tenantId, id) => {
+    const occasion = await occasionClient.findOne({ _id: id, tenantId });
 
     if (!occasion) {
         throw new AppError('Occasion not found', 404);
@@ -234,7 +245,7 @@ exports.endOccasion = async (id) => {
 };
 
 exports.updateAttendance = async (caller, id, updateData) => {
-    const occasion = await occasionClient.findById(id);
+    const occasion = await occasionClient.findOne({ _id: id, tenantId: caller.tenantId });
     if (!occasion) {
         throw new AppError('Occasion not found', 404);
     }
@@ -260,7 +271,7 @@ exports.updateAttendance = async (caller, id, updateData) => {
             allowedUserIds.add(caller._id.toString());
             if (caller.belongsto) {
                 const groupMembers = await userClient.find(
-                    { belongsto: caller.belongsto },
+                    { belongsto: caller.belongsto, tenantId: caller.tenantId },
                     { _id: 1 }
                 ).lean();
                 groupMembers.forEach(m => allowedUserIds.add(m._id.toString()));
@@ -282,7 +293,7 @@ exports.updateAttendance = async (caller, id, updateData) => {
             const now = new Date();
             const bulkOps = scopedAttendance.map(attendee => ({
                 updateOne: {
-                    filter: { user: attendee.userId, occasion: id },
+                    filter: { tenantId: caller.tenantId, user: attendee.userId, occasion: id },
                     update: { $set: { checkedInAt: now, status: attendee.status, updatedAt: now } },
                     upsert: true
                 }
@@ -302,6 +313,13 @@ exports.updateAttendance = async (caller, id, updateData) => {
         const presentUserIds = scopedAttendance
             .filter(val => val.status === 'present' && val.userId)
             .map(val => val.userId.toString());
+
+        const nonPresentUserIds = scopedAttendance
+            .filter(val => val.status !== 'present' && val.userId)
+            .map(val => val.userId.toString());
+
+        // Remove non-present users
+        attendees = attendees.filter(a => !nonPresentUserIds.includes(a.toString()));
 
         const existingUserIds = attendees.map(a => a.toString());
         for (const userId of presentUserIds) {
@@ -371,22 +389,22 @@ exports.updateAttendance = async (caller, id, updateData) => {
     return updatedDoc;
 };
 
-exports.deleteOccasion = async (id) => {
-    const result = await occasionClient.deleteOne({ _id: id });
+exports.deleteOccasion = async (tenantId, id) => {
+    const result = await occasionClient.deleteOne({ _id: id, tenantId });
     if (result.deletedCount === 0) {
         throw new AppError("Occasion not found.", 404);
     }
     
-    await attendanceClient.deleteMany({ occasion: id });
+    await attendanceClient.deleteMany({ occasion: id, tenantId });
     
     // Cancel any scheduled background jobs
     await cancelOccasionJobs(id);
     
-    emitOccasionDeleted(id);
+    emitOccasionDeleted(tenantId, id);
 };
 
 exports.uploadImage = async (caller, id, fileBuffer) => {
-    const occasion = await occasionClient.findById(id);
+    const occasion = await occasionClient.findOne({ _id: id, tenantId: caller.tenantId });
 
     if (!occasion) {
         throw new AppError('Occasion not found', 404);
@@ -422,16 +440,17 @@ exports.uploadImage = async (caller, id, fileBuffer) => {
     return { imageRecord, occasion: updatedDoc };
 };
 
-exports.fetchAll = async () => {
-    return await occasionClient.find();
+exports.fetchAll = async (tenantId) => {
+    const query = tenantId ? { tenantId } : {};
+    return await occasionClient.find(query);
 };
 
-exports.fetchPaginated = async (page, limit) => {
+exports.fetchPaginated = async (tenantId, page, limit) => {
     const skip = (page - 1) * limit;
 
     const [total, occasions] = await Promise.all([
-        occasionClient.countDocuments(),
-        occasionClient.find().sort({ start_at: -1, _id: -1 }).skip(skip).limit(limit)
+        occasionClient.countDocuments({ tenantId }),
+        occasionClient.find({ tenantId }).sort({ start_at: -1, _id: -1 }).skip(skip).limit(limit)
     ]);
 
     const hasNextPage = total > skip + occasions.length;
@@ -447,15 +466,15 @@ exports.fetchPaginated = async (page, limit) => {
     };
 };
 
-exports.fetchById = async (id) => {
-    const occasion = await occasionClient.findOne({ _id: id });
+exports.fetchById = async (tenantId, id) => {
+    const occasion = await occasionClient.findOne({ _id: id, tenantId });
     if (!occasion) {
         throw new AppError("Occasion not found.", 404);
     }
     return occasion;
 };
 
-exports.fetchByStatus = async (statusRaw) => {
+exports.fetchByStatus = async (tenantId, statusRaw) => {
     if (!statusRaw) {
         throw new AppError("Missing status parameter.", 400);
     }
@@ -466,24 +485,26 @@ exports.fetchByStatus = async (statusRaw) => {
     }
 
     return await occasionClient.find({
+        tenantId,
         status: { $in: status }
     });
 };
 
-exports.fetchByDate = async (date) => {
-    return await occasionClient.find({ start_at: { $eq: new Date(date) } });
+exports.fetchByDate = async (tenantId, date) => {
+    return await occasionClient.find({ tenantId, start_at: { $eq: new Date(date) } });
 };
 
-exports.fetchByMonth = async (month) => {
+exports.fetchByMonth = async (tenantId, month) => {
     return await occasionClient.find({ start_at: { $regex: new RegExp(`^${month}`) } });
 };
 
-exports.fetchByYear = async (year) => {
+exports.fetchByYear = async (tenantId, year) => {
     return await occasionClient.find({ start_at: { $regex: new RegExp(`^${year}`) } });
 };
 
-exports.fetchGrouped = async () => {
+exports.fetchGrouped = async (tenantId) => {
     return await occasionClient.aggregate([
+        { $match: { tenantId: new (require("mongoose").Types.ObjectId)(tenantId) } },
         { $unwind: '$events' },
         {
             $group: {

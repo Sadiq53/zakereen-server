@@ -3,7 +3,7 @@ const asyncHandler = require('express-async-handler');
 
 // POST /create
 exports.createOccasion = asyncHandler(async (req, res) => {
-    const newOccasion = await occasionService.createOccasion(req.body);
+    const newOccasion = await occasionService.createOccasion(req.tenantId, req.body);
     res.status(201).json(newOccasion);
 });
 
@@ -17,7 +17,7 @@ exports.updateOccasion = asyncHandler(async (req, res) => {
 // PATCH /end/:id
 exports.endOccasion = asyncHandler(async (req, res) => {
     const { id } = req.params;
-    const updatedDoc = await occasionService.endOccasion(id);
+    const updatedDoc = await occasionService.endOccasion(req.tenantId, id);
     res.status(200).json({ success: true, data: updatedDoc });
 });
 
@@ -31,7 +31,7 @@ exports.updateAttendance = asyncHandler(async (req, res) => {
 // DELETE /remove/:id
 exports.deleteOccasion = asyncHandler(async (req, res) => {
     const { id } = req.params;
-    await occasionService.deleteOccasion(id);
+    await occasionService.deleteOccasion(req.tenantId, id);
     res.status(200).json({ success: true, message: "Occasion deleted successfully." });
 });
 
@@ -45,7 +45,7 @@ exports.uploadImage = asyncHandler(async (req, res) => {
 
 // GET /fetch/all
 exports.fetchAll = asyncHandler(async (req, res) => {
-    const occasions = await occasionService.fetchAll();
+    const occasions = await occasionService.fetchAll(req.tenantId);
     res.status(200).json(occasions);
 });
 
@@ -53,47 +53,47 @@ exports.fetchAll = asyncHandler(async (req, res) => {
 exports.fetchPaginated = asyncHandler(async (req, res) => {
     const page = parseInt(req.query.page) || 1;
     const limit = parseInt(req.query.limit) || 15;
-    const result = await occasionService.fetchPaginated(page, limit);
+    const result = await occasionService.fetchPaginated(req.tenantId, page, limit);
     res.status(200).json(result);
 });
 
 // GET /fetch/id/:id
 exports.fetchById = asyncHandler(async (req, res) => {
     const { id } = req.params;
-    const occasion = await occasionService.fetchById(id);
+    const occasion = await occasionService.fetchById(req.tenantId, id);
     res.status(200).json(occasion);
 });
 
 // GET /fetch/status
 exports.fetchByStatus = asyncHandler(async (req, res) => {
     const { status } = req.query;
-    const occasions = await occasionService.fetchByStatus(status);
+    const occasions = await occasionService.fetchByStatus(req.tenantId, status);
     res.status(200).json(occasions);
 });
 
 // GET /fetch/date/:date
 exports.fetchByDate = asyncHandler(async (req, res) => {
     const { date } = req.params;
-    const occasions = await occasionService.fetchByDate(date);
+    const occasions = await occasionService.fetchByDate(req.tenantId, date);
     res.status(200).json(occasions);
 });
 
 // GET /fetch/month/:month
 exports.fetchByMonth = asyncHandler(async (req, res) => {
     const { month } = req.params;
-    const occasions = await occasionService.fetchByMonth(month);
+    const occasions = await occasionService.fetchByMonth(req.tenantId, month);
     res.status(200).json(occasions);
 });
 
 // GET /fetch/year/:year
 exports.fetchByYear = asyncHandler(async (req, res) => {
     const { year } = req.params;
-    const occasions = await occasionService.fetchByYear(year);
+    const occasions = await occasionService.fetchByYear(req.tenantId, year);
     res.status(200).json(occasions);
 });
 
 // GET /fetch/group
 exports.fetchGrouped = asyncHandler(async (req, res) => {
-    const groupedParties = await occasionService.fetchGrouped();
+    const groupedParties = await occasionService.fetchGrouped(req.tenantId);
     res.status(200).json(groupedParties);
 });

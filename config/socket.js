@@ -11,10 +11,17 @@ const initializeSocket = (server) => {
     });
 
     io.on('connection', (socket) => {
-        console.log('New client connected');
+        console.log('New client connected', socket.id);
+
+        socket.on('joinTenant', (tenantId) => {
+            if (tenantId) {
+                socket.join(`tenant:${tenantId}`);
+                console.log(`Socket ${socket.id} joined tenant room: ${tenantId}`);
+            }
+        });
 
         socket.on('disconnect', () => {
-            console.log('Client disconnected');
+            console.log('Client disconnected', socket.id);
         });
     });
 

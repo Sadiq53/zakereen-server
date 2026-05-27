@@ -1,9 +1,10 @@
 const groupService = require('../services/groupService');
 const asyncHandler = require('express-async-handler');
+const AppError = require('../utils/AppError');
 
 // GET /
 exports.getAllGroups = asyncHandler(async (req, res) => {
-    const groups = await groupService.getAllGroups();
+    const groups = await groupService.getAllGroups(req.tenantId);
     res.status(200).json(groups);
 });
 
@@ -16,8 +17,18 @@ exports.getGroupById = asyncHandler(async (req, res) => {
 
 // POST /create
 exports.createGroup = asyncHandler(async (req, res) => {
-    const { name, adminId, userDetails } = req.body;
-    const result = await groupService.createGroup(name, adminId, userDetails);
+    const { name, adminId, userDetails, tenantId } = req.body;
+    
+    let targetTenantId = req.tenantId;
+    if (req.isRootAdmin && tenantId) {
+        targetTenantId = tenantId;
+    }
+
+    if (!targetTenantId) {
+        throw new AppError("Tenant ID is required to create a group.", 400);
+    }
+
+    const result = await groupService.createGroup(targetTenantId, name, adminId, userDetails);
     res.status(201).json(result);
 });
 

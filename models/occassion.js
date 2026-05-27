@@ -4,6 +4,7 @@ const { allowedTypes } = require('../middlewares/validateUtils')
 
 const occasionSchema = new mongoose.Schema(
     {
+        tenantId: { type: mongoose.Schema.Types.ObjectId, ref: 'Tenant', required: true, index: true },
         createdat: { type: Date, default: Date.now },
         updatedat: { type: Date, default: Date.now },
         time: { type: Date, default: Date.now },
@@ -55,9 +56,9 @@ const occasionSchema = new mongoose.Schema(
     { collection: "occasions" }
 );
 
-// Analytics Indexes
-occasionSchema.index({ start_at: -1, status: 1 });
-occasionSchema.index({ status: 1, "events.party": 1 });
+// Multi-tenant indexes
+occasionSchema.index({ tenantId: 1, start_at: -1, status: 1 });
+occasionSchema.index({ tenantId: 1, status: 1, "events.party": 1 });
+occasionSchema.index({ tenantId: 1, status: 1 });
 
-
-module.exports = mongoose.model('occasions', occasionSchema);  
+module.exports = mongoose.model('occasions', occasionSchema);

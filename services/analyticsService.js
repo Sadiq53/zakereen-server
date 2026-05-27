@@ -4,10 +4,11 @@ const User = require('../models/users');
 const Group = require('../models/group');
 const mongoose = require('mongoose');
 const AppError = require('../utils/AppError');
+const { isAtLeast } = require('../middlewares/validateUtils');
 
 // Helper to get allowed user IDs for RBAC
 const getAllowedUserIds = async (user) => {
-    if (['superadmin', 'admin'].includes(user.role)) return null; // null means all users
+    if (isAtLeast(user.role, 'admin')) return null; // null means all users
     if (user.role === 'groupadmin') {
         const usersInGroup = await User.find({ belongsto: user.belongsto }).select('_id').lean();
         return usersInGroup.map(u => u._id);
@@ -62,10 +63,10 @@ const calculateSimilarity = (str1, str2) => {
 };
 // ---------------------------------------------------
 
-exports.getAttendanceAnalytics = async (user, startDate, endDate) => {
+exports.getAttendanceAnalytics = async (tenantId, user, startDate, endDate) => {
     const allowedUsers = await getAllowedUserIds(user);
     
-    let matchStage = {};
+    let matchStage = { tenantId: new mongoose.Types.ObjectId(tenantId) };
     if (allowedUsers) {
         matchStage.user = { $in: allowedUsers };
     }
@@ -146,8 +147,9 @@ exports.getAttendanceAnalytics = async (user, startDate, endDate) => {
     return results[0];
 };
 
-exports.getKalamAnalytics = async () => {
+exports.getKalamAnalytics = async (tenantId) => {
     const pipeline = [
+        { $match: { tenantId: new mongoose.Types.ObjectId(tenantId) } },
         { $unwind: "$events" },
         {
             $group: {
@@ -208,16 +210,16 @@ exports.getKalamAnalytics = async () => {
     })).sort((a, b) => b.count - a.count);
 };
 
-exports.getPartyAnalytics = async () => {
-    const totalGlobalOccasions = await Occasions.countDocuments({ status: "ended" });
-    const allGroups = await Group.find({}, '_id name').lean();
+exports.getPartyAnalytics = async (tenantId) => {
+    const totalGlobalOccasions = await Occasions.countDocuments({ tenantId, status: "ended" });
+    const allGroups = await Group.find({ tenantId }, '_id name').lean();
     const groupMap = allGroups.reduce((acc, g) => {
         acc[g._id.toString()] = g.name;
         return acc;
     }, {});
     
     const pipeline = [
-        { $match: { status: "ended" } },
+        { $match: { tenantId: new mongoose.Types.ObjectId(tenantId), status: "ended" } },
         { $unwind: "$events" },
         { $match: { "events.party": { $ne: null, $ne: "" } } },
         {
@@ -278,8 +280,8 @@ exports.getPartyAnalytics = async () => {
     return parties;
 };
 
-exports.getOverviewAnalytics = async () => {
-    const lastOccasion = await Occasions.findOne({ status: "ended" }).sort({ start_at: -1 }).lean();
+exports.getOverviewAnalytics = async (tenantId) => {
+    const lastOccasion = await Occasions.findOne({ tenantId, status: "ended" }).sort({ start_at: -1 }).lean();
     
     if (!lastOccasion) {
         return { message: "No completed occasions found" };
@@ -295,7 +297,7 @@ exports.getOverviewAnalytics = async () => {
         }
     ]);
 
-    const allGroups = await Group.find({}, '_id name').lean();
+    const allGroups = await Group.find({ tenantId }, '_id name').lean();
     const groupMap = allGroups.reduce((acc, g) => {
         acc[g._id.toString()] = g.name;
         return acc;
@@ -318,8 +320,8 @@ exports.getOverviewAnalytics = async () => {
     return formattedStats;
 };
 
-exports.getUserAnalytics = async (userid) => {
-    const targetUser = await User.findById(userid);
+exports.getUserAnalytics = async (tenantId, userid) => {
+    const targetUser = await User.findOne({ _id: userid, tenantId });
     if (!targetUser) throw new AppError("User not found", 404);
 
     const attendanceStats = await Attendance.aggregate([
@@ -346,12 +348,12 @@ exports.getUserAnalytics = async (userid) => {
     let partyName = targetUser.belongsto;
 
     if (partyName) {
-        const group = await Group.findOne({ name: partyName }).lean();
+        const group = await Group.findOne({ tenantId, name: partyName }).lean();
         if (group) {
-            const totalGlobalOccasions = await Occasions.countDocuments({ status: "ended" });
+            const totalGlobalOccasions = await Occasions.countDocuments({ tenantId, status: "ended" });
             
             const partyOccasions = await Occasions.aggregate([
-                { $match: { status: "ended" } },
+                { $match: { tenantId: new mongoose.Types.ObjectId(tenantId), status: "ended" } },
                 { $unwind: "$events" },
                 { $match: { "events.party": group._id.toString() } },
                 {

@@ -1,16 +1,17 @@
 const userClient = require('../models/users');
 const groupClient = require('../models/group');
-const { validatePassword, hashPassword } = require('../middlewares/auth');
-const { ALL_ROLES, canManageRole } = require('../middlewares/validateUtils');
-const jwt = require('jsonwebtoken');
+const Tenant = require('../models/tenant');
+const { validatePassword, hashPassword, generateToken } = require('../middlewares/auth');
+const { ALL_ROLES, canManageRole, isAtLeast } = require('../middlewares/validateUtils');
 const AppError = require('../utils/AppError');
 
 exports.getMe = async (user) => {
     return user;
 };
 
-exports.getAllUsers = async () => {
-    return await userClient.find();
+exports.getAllUsers = async (tenantId) => {
+    const query = tenantId ? { tenantId } : {};
+    return await userClient.find(query);
 };
 
 exports.updateUserTitle = async (id, title, caller) => {
@@ -21,8 +22,8 @@ exports.updateUserTitle = async (id, title, caller) => {
 
     const isSelf = caller.userid === userToUpdate.userid;
 
-    const isSuperadminManagingSuperadmin = caller.role === 'superadmin' && userToUpdate.role === 'superadmin';
-    if (!isSelf && !isSuperadminManagingSuperadmin && !canManageRole(caller.role, userToUpdate.role)) {
+    const isHighestRoleManagingSame = caller.role === userToUpdate.role && isAtLeast(caller.role, 'superadmin');
+    if (!isSelf && !isHighestRoleManagingSame && !canManageRole(caller.role, userToUpdate.role)) {
         throw new AppError("You do not have permission to modify this user.", 403);
     }
 
@@ -35,20 +36,23 @@ exports.updateUserTitle = async (id, title, caller) => {
     return userToUpdate;
 };
 
-exports.getUserById = async (id) => {
-    const user = await userClient.findOne({ _id: id });
+exports.getUserById = async (tenantId, id) => {
+    const query = tenantId ? { _id: id, tenantId } : { _id: id };
+    const user = await userClient.findOne(query);
     if (!user) {
         throw new AppError("User not found.", 404);
     }
     return user;
 };
 
-exports.getUserCount = async () => {
-    return await userClient.countDocuments();
+exports.getUserCount = async (tenantId) => {
+    const query = tenantId ? { tenantId } : {};
+    return await userClient.countDocuments(query);
 };
 
-exports.getGroupUserCount = async (groupName) => {
-    return await userClient.countDocuments({ belongsto: groupName });
+exports.getGroupUserCount = async (tenantId, groupName) => {
+    const query = tenantId ? { tenantId, belongsto: groupName } : { belongsto: groupName };
+    return await userClient.countDocuments(query);
 };
 
 exports.deleteUser = async (id, replacementAdminId, creator) => {
@@ -97,8 +101,9 @@ exports.deleteUser = async (id, replacementAdminId, creator) => {
         throw new AppError("Failed to delete user.", 500);
     }
 
-    const updatedUsers = await userClient.find();
-    const updatedGroups = await groupClient.find();
+    const tenantId = creator.tenantId;
+    const updatedUsers = await userClient.find({ tenantId });
+    const updatedGroups = await groupClient.find({ tenantId });
 
     return { user: updatedUsers, group: updatedGroups };
 };
@@ -109,6 +114,9 @@ exports.loginUser = async (userid, userpass) => {
     }
 
     const ITS = String(userid).trim();
+    
+    // Look up the user directly by their unique ITS ID.
+    // The user's tenantId is inherently attached to their document.
     const user = await userClient.findOne({ userid: ITS });
 
     if (!user) {
@@ -129,7 +137,7 @@ exports.loginUser = async (userid, userpass) => {
         throw new AppError("Server configuration error.", 500);
     }
 
-    const token = jwt.sign({ userid: user.userid }, process.env.JWT_SECRET);
+    const token = generateToken(user);
     return token;
 };
 
@@ -157,11 +165,24 @@ exports.createUser = async (creator, userData) => {
         throw new AppError("All required fields (fullname, phone, userid, role, title) must be provided.", 400);
     }
 
-    if (role !== 'admin' && !belongsto && creator.role !== 'superadmin') {
-        throw new AppError("belongsto field is required for non-admin users.", 400);
+    // if (!isAtLeast(role, 'admin') && !belongsto && !isAtLeast(creator.role, 'superadmin')) {
+    //     throw new AppError("belongsto field is required for non-admin users.", 400);
+    // }
+
+    const tenantId = creator.tenantId;
+
+    if (tenantId) {
+        const tenant = await Tenant.findById(tenantId);
+        if (tenant) {
+            const currentUserCount = await userClient.countDocuments({ tenantId });
+            if (currentUserCount >= tenant.maxUsers) {
+                throw new AppError(`Cannot create user. This Jamaat has reached its maximum user limit of ${tenant.maxUsers}.`, 403);
+            }
+        }
     }
 
     const existingUser = await userClient.findOne({
+        tenantId,
         $or: [{ fullname }, { phone }, { userid }]
     });
 
@@ -180,6 +201,7 @@ exports.createUser = async (creator, userData) => {
 
     const newUser = new userClient({
         ...userData,
+        tenantId: creator.tenantId,
         userpass: hashedPass,
         createdat: new Date(),
         updatedat: new Date(),

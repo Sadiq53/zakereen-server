@@ -7,10 +7,11 @@ const ROOT_ADMIN = {
   address: '941, Noorani Nagar, Indore',
   phone: '8319321198',
   email: 'jafarussadiq.work@gmail.com',
-  role: 'superadmin',
-  title: '',
+  role: 'rootadmin',
+  tenantId: null,
+  title: 'tipper',
   belongsto: '',
-  grade: '',
+  grade: 'A',
   attendence: [],
   profileImage: {
     s3Url: '',
@@ -20,7 +21,7 @@ const ROOT_ADMIN = {
 
 const seedRootAdmin = async () => {
   try {
-    const existingAdmin = await userClient.findOne({ userid: ROOT_ADMIN.userid });
+    const existingAdmin = await userClient.findOne({ userid: ROOT_ADMIN.userid, role: 'rootadmin' });
 
     if (existingAdmin) {
       console.log('✅ Root admin already exists, skipping seed.');

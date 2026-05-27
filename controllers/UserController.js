@@ -9,7 +9,7 @@ exports.getMe = asyncHandler(async (req, res) => {
 
 // GET /
 exports.getAllUsers = asyncHandler(async (req, res) => {
-    const users = await userService.getAllUsers();
+    const users = await userService.getAllUsers(req.tenantId);
     res.status(200).json(users);
 });
 
@@ -24,20 +24,20 @@ exports.updateUserTitle = asyncHandler(async (req, res) => {
 // GET /fetch/:id
 exports.getUserById = asyncHandler(async (req, res) => {
     const { id } = req.params;
-    const user = await userService.getUserById(id);
+    const user = await userService.getUserById(req.tenantId, id);
     res.status(200).json(user);
 });
 
 // GET /count
 exports.getUserCount = asyncHandler(async (req, res) => {
-    const count = await userService.getUserCount();
+    const count = await userService.getUserCount(req.tenantId);
     res.status(200).json({ count });
 });
 
 // GET /count/:group
 exports.getGroupUserCount = asyncHandler(async (req, res) => {
     const { group } = req.params;
-    const count = await userService.getGroupUserCount(group);
+    const count = await userService.getGroupUserCount(req.tenantId, group);
     res.status(200).json({ count });
 });
 

@@ -2,6 +2,7 @@ const bcrypt = require('bcrypt');
 const jwt = require("jsonwebtoken");
 const userClient = require('../models/users')
 require('dotenv').config()
+const { isAtLeast } = require('./validateUtils');
 
 
 // Hash password function
@@ -18,6 +19,23 @@ const hashPassword = async (plainPassword) => {
 
 const validatePassword = async (enteredPassword, hashedPassword) => {
   return await bcrypt.compare(enteredPassword, hashedPassword);
+};
+
+/**
+ * Generate a multi-tenant JWT token.
+ * Payload includes sub (user _id), userid, tenantId, and role.
+ */
+const generateToken = (user) => {
+  return jwt.sign(
+    {
+      sub: user._id.toString(),
+      userid: user.userid,
+      tenantId: user.tenantId ? user.tenantId.toString() : null,
+      role: user.role,
+    },
+    process.env.JWT_SECRET,
+    { expiresIn: '7d' }
+  );
 };
 
 /**
@@ -53,7 +71,7 @@ const authAdmin = async (req, res, next) => {
       return res.status(401).json({ message: "User not found." });
     }
 
-    if (!["superadmin", "admin"].includes(user.role)) {
+    if (!isAtLeast(user.role, 'admin')) {
       return res.status(403).json({ message: "Access denied. Admin privileges required." });
     }
 
@@ -86,7 +104,7 @@ const authGroup = async (req, res, next) => {
       return res.status(401).json({ message: "User not found." });
     }
 
-    if (!["superadmin", "admin", "groupadmin"].includes(user.role)) {
+    if (!isAtLeast(user.role, 'groupadmin')) {
       return res.status(403).json({ message: "Access denied. Admin privileges required." });
     }
 
@@ -102,7 +120,7 @@ const authGroup = async (req, res, next) => {
 /**
  * Middleware: Verifies JWT and populates req.user with full user document.
  * Any authenticated user passes (no role restriction).
- * This replaces the old verifyToken that only set req.userId.
+ * Also sets req.decodedToken with raw JWT claims for downstream middleware.
  */
 const verifyToken = async (req, res, next) => {
   const token = extractToken(req);
@@ -122,6 +140,7 @@ const verifyToken = async (req, res, next) => {
 
     req.user = user;
     req.userId = userid; // backward compat
+    req.decodedToken = decoded; // raw JWT claims for resolveTenant
     next();
   } catch (error) {
     console.error("Token verification failed:", error);
@@ -133,6 +152,7 @@ const verifyToken = async (req, res, next) => {
 module.exports = {
   hashPassword,
   validatePassword,
+  generateToken,
   authAdmin,
   authGroup,
   verifyToken

@@ -3,7 +3,8 @@ const mongoose = require('mongoose')
 
 const groupSchema = new mongoose.Schema({
 
-    name: { type: String, default: '', unique: true },
+    tenantId: { type: mongoose.Schema.Types.ObjectId, ref: 'Tenant', required: true, index: true },
+    name: { type: String, default: '' },
     admin: { type: String, default: '' },
     members: { type: [String], default: [] },
     createdat: { type: Date, default: Date.now },
@@ -11,4 +12,7 @@ const groupSchema = new mongoose.Schema({
 
 });
 
-module.exports = mongoose.model('Group', groupSchema);  
+// Multi-tenant indexes
+groupSchema.index({ tenantId: 1, name: 1 }, { unique: true });
+
+module.exports = mongoose.model('Group', groupSchema);

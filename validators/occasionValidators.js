@@ -7,7 +7,11 @@ exports.createOccasionSchema = z.object({
     time: z.string().min(1, 'Time is required'),
     created_by: z.string().min(1, 'Creator ID is required'),
     location: z.string().optional(),
-    hijri_date: z.string().optional(),
+    hijri_date: z.object({
+        year: z.number().nullable().optional(),
+        month: z.number().nullable().optional(),
+        day: z.number().nullable().optional()
+    }).optional().nullable(),
     description: z.string().optional(),
     events: z.array(z.object({
         name: z.string(),
@@ -20,7 +24,11 @@ exports.updateOccasionSchema = z.object({
     name: z.string().optional(),
     start_at: z.string().optional(),
     location: z.string().optional(),
-    hijri_date: z.string().optional(),
+    hijri_date: z.object({
+        year: z.number().nullable().optional(),
+        month: z.number().nullable().optional(),
+        day: z.number().nullable().optional()
+    }).optional().nullable(),
     description: z.string().optional(),
     status: z.enum(['pending', 'started', 'ended']).optional(),
     events: z.array(z.any()).optional(), // Events can be complex, skipping deep validation for partial updates

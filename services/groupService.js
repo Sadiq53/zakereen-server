@@ -3,8 +3,9 @@ const userClient = require('../models/users');
 const { hashPassword } = require('../middlewares/auth');
 const AppError = require('../utils/AppError');
 
-exports.getAllGroups = async () => {
-    return await groupClient.find({});
+exports.getAllGroups = async (tenantId) => {
+    const query = tenantId ? { tenantId } : {};
+    return await groupClient.find(query);
 };
 
 exports.getGroupById = async (groupId) => {
@@ -15,8 +16,8 @@ exports.getGroupById = async (groupId) => {
     return group;
 };
 
-exports.createGroup = async (name, adminId, userDetails) => {
-    const existingGroup = await groupClient.findOne({ name });
+exports.createGroup = async (tenantId, name, adminId, userDetails) => {
+    const existingGroup = await groupClient.findOne({ tenantId, name });
     if (existingGroup) {
         throw new AppError('Group with this name already exists.', 400);
     }
@@ -66,6 +67,7 @@ exports.createGroup = async (name, adminId, userDetails) => {
     }
 
     const createGroup = {
+        tenantId,
         name,
         admin: String(groupAdmin),
         members: [String(groupAdmin)],
@@ -99,6 +101,14 @@ exports.deleteGroup = async (groupId) => {
     const group = await groupClient.findByIdAndDelete(groupId);
     if (!group) {
         throw new AppError('Group not found.', 404);
+    }
+
+    if (group.admin) {
+        const oldAdminUser = await userClient.findById(group.admin);
+        if (oldAdminUser && oldAdminUser.role === 'groupadmin') {
+            oldAdminUser.role = 'member';
+            await oldAdminUser.save();
+        }
     }
 
     await userClient.updateMany(
