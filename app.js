@@ -2,36 +2,71 @@ const express = require('express')
 const app = express();
 const path = require('path')
 const cors = require('cors')
+const helmet = require('helmet')
+const compression = require('compression')
+const rateLimit = require('express-rate-limit')
 const routes = require('./config/allRoutes')
 const userClient = require('./models/users')
-const cron = require('node-cron');
-const { enqueueStartOccasions, enqueueEndOccasions } = require('./jobs/occasionJobs');
+
 const { initializeSocket } = require("./config/socket");
+const { seedRootAdmin } = require("./config/seedAdmin");
+const { verifyToken } = require('./middlewares/auth');
+
+// Trust proxy (required when behind ngrok, nginx, or any reverse proxy)
+app.set('trust proxy', 1);
+
+// Rate limiting configuration
+const limiter = rateLimit({
+    windowMs: 15 * 60 * 1000, // 15 minutes
+    max: 100, // Limit each IP to 100 requests per `window` (here, per 15 minutes)
+    standardHeaders: true, // Return rate limit info in the `RateLimit-*` headers
+    legacyHeaders: false, // Disable the `X-RateLimit-*` headers
+    message: 'Too many requests from this IP, please try again after 15 minutes'
+});
+
+// Apply rate limiting to all requests
+app.use(limiter);
+
+// Security Headers
+app.use(helmet());
+
+// Compress response bodies
+app.use(compression());
 
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'assets')))
 app.use(express.urlencoded({ extended : true }))
 app.use(cors({
     origin: '*', // Allow all origins
-    methods: ['GET', 'POST', 'PUT', 'DELETE'], // Allow required methods
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH'], // Allow required methods
     allowedHeaders: ['Content-Type', 'Authorization'] // Allow required headers
 }));
 
-app.get("/all", async (req, res) => {
+app.get("/all", verifyToken, async (req, res) => {
     const user = await userClient.find()
     res.status(200).json(user)
 })
 
 app.use(routes)
 
-// Schedule jobs
-cron.schedule('*/5 * * * *', enqueueStartOccasions); // Every 5 min
-cron.schedule('*/10 * * * *', enqueueEndOccasions);  // Every 10 min
+// Remove legacy node-cron schedule jobs
 
+const errorHandler = require('./middlewares/errorHandler');
+
+// Global Error Handler
+app.use(errorHandler);
+
+const { initializeWorker } = require('./jobs/bullQueue');
 
 const port = process.env.PORT || 8080
-const server = app.listen(port, ()=>{
+const server = app.listen(port, async () => {
     console.log(`Server is running on : ${port}`)
+    await seedRootAdmin();
+    
+    // Initialize BullMQ background event worker
+    initializeWorker();
+    console.log(`BullMQ Worker initialized successfully`);
 })
 
 initializeSocket(server);
+

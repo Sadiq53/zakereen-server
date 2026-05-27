@@ -1,0 +1,50 @@
+const express = require('express');
+const router = express.Router();
+const userController = require('../controllers/UserController');
+const { verifyToken, authGroup, authAdmin } = require('../middlewares/auth');
+const validateRequest = require('../middlewares/validateRequest');
+const {
+    loginSchema,
+    createUserSchema,
+    updateUserSchema,
+    updateUserTitleSchema,
+    addFcmTokenSchema
+} = require('../validators/userValidators');
+
+// GET /me — Any authenticated user can fetch their own profile
+router.get('/me', verifyToken, userController.getMe);
+
+// GET / — List all users (any authenticated user can view all users)
+router.get('/', verifyToken, userController.getAllUsers);
+
+// PUT /update/:id/title — Update a user's title
+router.put('/update/:id/title', authGroup, validateRequest({ body: updateUserTitleSchema }), userController.updateUserTitle);
+
+// GET /fetch/:id — Any authenticated user can fetch a specific user
+router.get('/fetch/:id', verifyToken, userController.getUserById);
+
+// GET /count — Count all users (authenticated only)
+router.get('/count', verifyToken, userController.getUserCount);
+
+// GET /count/:group — Count users in a specific group (authenticated only)
+router.get('/count/:group', verifyToken, userController.getGroupUserCount);
+
+// DELETE /remove/:id — Delete a user
+router.delete('/remove/:id', authGroup, userController.deleteUser);
+
+// POST /authentication/login — Public login endpoint
+router.post('/authentication/login', validateRequest({ body: loginSchema }), userController.loginUser);
+
+// POST /create — Create a new user
+router.post('/create', authGroup, validateRequest({ body: createUserSchema }), userController.createUser);
+
+// PATCH /update/:userid — Update a user
+router.patch('/update/:userid', verifyToken, validateRequest({ body: updateUserSchema }), userController.updateUser);
+
+// PUT /fcm-token — Add/update a device token for the authenticated user
+router.put('/fcm-token', verifyToken, validateRequest({ body: addFcmTokenSchema }), userController.addFcmToken);
+
+// DELETE /fcm-token — Remove a device token (e.g., on logout)
+router.delete('/fcm-token', verifyToken, validateRequest({ body: addFcmTokenSchema }), userController.removeFcmToken);
+
+module.exports = router;

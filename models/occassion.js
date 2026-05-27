@@ -1,6 +1,6 @@
 require('../config/dataBase')
 const mongoose = require('mongoose')
-const { allowedTypes } = require('../utils/validateUtils')
+const { allowedTypes } = require('../middlewares/validateUtils')
 
 const occasionSchema = new mongoose.Schema(
     {
@@ -39,10 +39,25 @@ const occasionSchema = new mongoose.Schema(
                 name: { type: String },
                 count: { type: Number }
             }
-        ]
+        ],
+        images: [
+            {
+                url: { type: String, required: true },
+                sizeMB: { type: Number },
+                uploadedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+                createdAt: { type: Date, default: Date.now }
+            }
+        ],
+        // Push notification deduplication flags
+        notifiedStarted: { type: Boolean, default: false },
+        notifiedReminder: { type: Boolean, default: false },
     },
     { collection: "occasions" }
 );
+
+// Analytics Indexes
+occasionSchema.index({ start_at: -1, status: 1 });
+occasionSchema.index({ status: 1, "events.party": 1 });
 
 
 module.exports = mongoose.model('occasions', occasionSchema);  

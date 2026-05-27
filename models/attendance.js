@@ -18,5 +18,9 @@ const attendanceSchema = new mongoose.Schema({
 });
 
 attendanceSchema.index({ occasion: 1, user: 1 }, { unique: true });
+// Analytics Indexes
+attendanceSchema.index({ occasion: 1, status: 1 });
+attendanceSchema.index({ user: 1, status: 1 });
+attendanceSchema.index({ user: 1, createdAt: -1 });
 
 module.exports = mongoose.model('Attendance', attendanceSchema);
