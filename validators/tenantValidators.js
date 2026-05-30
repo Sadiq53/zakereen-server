@@ -5,7 +5,7 @@ const createTenantSchema = z.object({
     slug: z.string().min(2).max(50).regex(/^[a-z0-9-]+$/, "Slug can only contain lowercase letters, numbers, and hyphens"),
     address: z.string().optional(),
     contactEmail: z.string().email("Invalid email format").optional().or(z.literal('')),
-    contactPhone: z.string().optional(),
+    contactPhone: z.coerce.string().optional(),
     maxUsers: z.number().int().positive().default(500),
     settings: z.object({
         timezone: z.string().default('Asia/Kolkata'),
@@ -18,7 +18,7 @@ const updateTenantSchema = z.object({
     name: z.string().min(2).max(100).optional(),
     address: z.string().optional(),
     contactEmail: z.string().email("Invalid email format").optional().or(z.literal('')),
-    contactPhone: z.string().optional(),
+    contactPhone: z.coerce.string().optional(),
     maxUsers: z.number().int().positive().optional(),
     settings: z.object({
         timezone: z.string().optional(),
@@ -28,9 +28,9 @@ const updateTenantSchema = z.object({
 });
 
 const assignCoordinatorSchema = z.object({
-    userid: z.string().min(3, "ITS/User ID is required"),
+    userid: z.coerce.string().min(3, "ITS/User ID is required"),
     fullname: z.string().optional(),
-    phone: z.string().optional(),
+    phone: z.coerce.string().optional(),
     email: z.string().email().optional().or(z.literal('')),
     address: z.string().optional()
 });

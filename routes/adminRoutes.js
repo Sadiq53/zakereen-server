@@ -32,7 +32,9 @@ router.post('/tenants/:id/coordinator', validateRequest({ body: assignCoordinato
 
 // Stats
 router.get('/stats/global', tenantController.getGlobalStats);
+router.get('/stats/tenants-comparison', tenantController.getAllTenantsAnalytics);
 router.get('/tenants/:id/stats', tenantController.getTenantStats);
+router.get('/tenants/:id/miqaats', tenantController.getTenantMiqaats);
 router.get('/audit-logs', tenantController.getAuditLogs);
 
 module.exports = router;

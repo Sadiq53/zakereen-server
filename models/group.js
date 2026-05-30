@@ -14,5 +14,7 @@ const groupSchema = new mongoose.Schema({
 
 // Multi-tenant indexes
 groupSchema.index({ tenantId: 1, name: 1 }, { unique: true });
+const cacheBuster = require('../utils/cacheBuster');
+groupSchema.plugin(cacheBuster);
 
 module.exports = mongoose.model('Group', groupSchema);

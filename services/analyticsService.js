@@ -4,17 +4,7 @@ const User = require('../models/users');
 const Group = require('../models/group');
 const mongoose = require('mongoose');
 const AppError = require('../utils/AppError');
-const { isAtLeast } = require('../middlewares/validateUtils');
 
-// Helper to get allowed user IDs for RBAC
-const getAllowedUserIds = async (user) => {
-    if (isAtLeast(user.role, 'admin')) return null; // null means all users
-    if (user.role === 'groupadmin') {
-        const usersInGroup = await User.find({ belongsto: user.belongsto }).select('_id').lean();
-        return usersInGroup.map(u => u._id);
-    }
-    return [user._id]; // regular member only sees themselves
-};
 
 // --- String Matching Algorithms for Kalam Analytics ---
 const normalizeString = (str) => {
@@ -64,12 +54,7 @@ const calculateSimilarity = (str1, str2) => {
 // ---------------------------------------------------
 
 exports.getAttendanceAnalytics = async (tenantId, user, startDate, endDate) => {
-    const allowedUsers = await getAllowedUserIds(user);
-    
     let matchStage = { tenantId: new mongoose.Types.ObjectId(tenantId) };
-    if (allowedUsers) {
-        matchStage.user = { $in: allowedUsers };
-    }
 
     if (startDate && endDate) {
         matchStage.createdAt = {

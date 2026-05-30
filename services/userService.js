@@ -4,6 +4,7 @@ const Tenant = require('../models/tenant');
 const { validatePassword, hashPassword, generateToken } = require('../middlewares/auth');
 const { ALL_ROLES, canManageRole, isAtLeast } = require('../middlewares/validateUtils');
 const AppError = require('../utils/AppError');
+const { emitUserCreated, emitUserUpdated, emitUserDeleted, emitGroupUpdated } = require('../utils/socketEmit');
 
 exports.getMe = async (user) => {
     return user;
@@ -33,6 +34,9 @@ exports.updateUserTitle = async (id, title, caller) => {
 
     userToUpdate.title = title;
     await userToUpdate.save();
+    
+    emitUserUpdated(userToUpdate);
+    
     return userToUpdate;
 };
 
@@ -87,6 +91,8 @@ exports.deleteUser = async (id, replacementAdminId, creator) => {
             if (newAdmin && newAdmin.role === 'member') {
                 newAdmin.role = 'groupadmin';
                 await newAdmin.save();
+                
+                emitUserUpdated(newAdmin);
             }
 
             await groupClient.updateOne(
@@ -99,6 +105,14 @@ exports.deleteUser = async (id, replacementAdminId, creator) => {
     const deletionResult = await userClient.deleteOne({ userid: id });
     if (deletionResult.deletedCount === 0) {
         throw new AppError("Failed to delete user.", 500);
+    }
+    
+    emitUserDeleted(creator.tenantId, userObjectId);
+    if (group) {
+        const updatedGroup = await groupClient.findOne({ name: belongsto });
+        if (updatedGroup) {
+            emitGroupUpdated(updatedGroup);
+        }
     }
 
     const tenantId = creator.tenantId;
@@ -228,6 +242,12 @@ exports.createUser = async (creator, userData) => {
             { $addToSet: { members: newUser._id } }
         );
     }
+    
+    emitUserCreated(newUser);
+    if (belongsto) {
+        const updatedGroup = await groupClient.findOne({ name: belongsto });
+        if (updatedGroup) emitGroupUpdated(updatedGroup);
+    }
 
     return newUser;
 };
@@ -271,6 +291,9 @@ exports.updateUser = async (updater, userid, updatePayload) => {
         Object.assign(userToUpdate, updateData);
         userToUpdate.updatedat = Date.now();
         await userToUpdate.save();
+        
+        emitUserUpdated(userToUpdate);
+        
         return userToUpdate;
     }
 
@@ -315,6 +338,8 @@ exports.updateUser = async (updater, userid, updatePayload) => {
     Object.assign(userToUpdate, updatePayload);
     userToUpdate.updatedat = Date.now();
     await userToUpdate.save();
+    
+    emitUserUpdated(userToUpdate);
 
     return userToUpdate;
 };

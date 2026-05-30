@@ -37,5 +37,7 @@ fcmTokens: { type: [String], default: [] },
 userSchema.index({ tenantId: 1, userid: 1 }, { unique: true, partialFilterExpression: { tenantId: { $ne: null } } });
 userSchema.index({ tenantId: 1, belongsto: 1, role: 1 });
 userSchema.index({ tenantId: 1, role: 1 });
+const cacheBuster = require('../utils/cacheBuster');
+userSchema.plugin(cacheBuster);
 
 module.exports = mongoose.model('User', userSchema);

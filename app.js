@@ -56,7 +56,7 @@ const errorHandler = require('./middlewares/errorHandler');
 // Global Error Handler
 app.use(errorHandler);
 
-const { initializeWorker } = require('./jobs/bullQueue');
+const { initializeWorker, sweepStaleOccasions } = require('./jobs/bullQueue');
 
 const port = process.env.PORT || 8080
 const server = app.listen(port, async () => {
@@ -66,6 +66,9 @@ const server = app.listen(port, async () => {
     // Initialize BullMQ background event worker
     initializeWorker();
     console.log(`BullMQ Worker initialized successfully`);
+
+    // Sweep stale occasions that missed their end jobs (e.g. server was down)
+    await sweepStaleOccasions();
 })
 
 initializeSocket(server);

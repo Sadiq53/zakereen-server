@@ -5,8 +5,8 @@ exports.createGroupSchema = z.object({
     adminId: z.string().optional(),
     userDetails: z.object({
         fullname: z.string(),
-        phone: z.string(),
-        userid: z.string(),
+        phone: z.coerce.string().optional(),
+        userid: z.coerce.string(),
         email: z.string().email().optional().or(z.literal('')),
         address: z.string().optional(),
     }).optional()

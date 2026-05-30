@@ -8,6 +8,7 @@ const { uploadToS3 } = require('../utils/s3Upload');
 const { dispatchNotification } = require('../utils/fcmUtils');
 const AppError = require('../utils/AppError');
 const { scheduleOccasionJobs, rescheduleOccasionJobs, cancelOccasionJobs } = require('../jobs/bullQueue');
+const { getDistanceInMeters } = require('../utils/geoUtils');
 
 async function markAttendance(tenantId, userId, occasionId, status) {
     const occasion = await occasionClient.findOne({ _id: occasionId, tenantId });
@@ -28,7 +29,7 @@ async function markAttendance(tenantId, userId, occasionId, status) {
 }
 
 exports.createOccasion = async (tenantId, occasionData) => {
-    const {
+    let {
         name,
         start_at: startAtIso,
         events,
@@ -37,9 +38,28 @@ exports.createOccasion = async (tenantId, occasionData) => {
         location,
         hijri_date,
         description,
+        latitude,
+        longitude,
+        geoRestrictionEnabled,
+        geofenceRadius,
+        locationName,
+        locationId
     } = occasionData;
     console.log(JSON.stringify(occasionData));
-    
+
+    if (locationId) {
+        const SavedLocation = require('../models/savedLocation');
+        const loc = await SavedLocation.findOne({ _id: locationId, tenantId });
+        if (loc) {
+            locationName = loc.name;
+            location = loc.name;
+            latitude = loc.latitude;
+            longitude = loc.longitude;
+            geoRestrictionEnabled = true;
+            geofenceRadius = 150;
+        }
+    }
+
 
     const startDateOnly = new Date(startAtIso);
     if (isNaN(startDateOnly)) {
@@ -65,6 +85,11 @@ exports.createOccasion = async (tenantId, occasionData) => {
         created_by,
         hijri_date,
         location,
+        locationName,
+        latitude,
+        longitude,
+        geoRestrictionEnabled: (latitude != null && longitude != null) ? (geoRestrictionEnabled !== false) : false,
+        geofenceRadius,
         start_at: startDateOnly,
         ends_at,
         events,
@@ -82,7 +107,9 @@ exports.createOccasion = async (tenantId, occasionData) => {
     emitOccasionCreated(newOccasion);
 
     try {
-        await dispatchNotification('OCCASION_CREATED', newOccasion);
+        await dispatchNotification('OCCASION_CREATED', newOccasion, {
+            excludeUserId: newOccasion.created_by
+        });
     } catch (fcmError) {
         console.error('FCM Broadcast Error:', fcmError);
     }
@@ -203,11 +230,31 @@ exports.updateOccasion = async (caller, id, updateData) => {
             }
         });
 
+        if (Array.isArray(updateData.removedEventIds) && updateData.removedEventIds.length > 0) {
+            updatedEvents = updatedEvents.filter(ev => {
+                const evId = ev._id?.toString();
+                return !evId || !updateData.removedEventIds.includes(evId);
+            });
+        }
+
         occasion.events = updatedEvents;
     }
 
+    if (updateData.locationId) {
+        const SavedLocation = require('../models/savedLocation');
+        const loc = await SavedLocation.findOne({ _id: updateData.locationId, tenantId: caller.tenantId });
+        if (loc) {
+            occasion.locationName = loc.name;
+            occasion.location = loc.name;
+            occasion.latitude = loc.latitude;
+            occasion.longitude = loc.longitude;
+            occasion.geoRestrictionEnabled = true;
+            occasion.geofenceRadius = 150;
+        }
+    }
+
     Object.keys(updateData).forEach((key) => {
-        if (forbiddenFields.includes(key) || key === 'events' || key === 'attendance') return;
+        if (forbiddenFields.includes(key) || key === 'events' || key === 'attendance' || key === 'removedEventIds' || key === 'locationId') return;
         occasion[key] = updateData[key];
     });
 
@@ -291,14 +338,53 @@ exports.updateAttendance = async (caller, id, updateData) => {
         // Perform bulk write for attendance
         if (scopedAttendance.length > 0) {
             const now = new Date();
-            const bulkOps = scopedAttendance.map(attendee => ({
-                updateOne: {
-                    filter: { tenantId: caller.tenantId, user: attendee.userId, occasion: id },
-                    update: { $set: { checkedInAt: now, status: attendee.status, updatedAt: now } },
-                    upsert: true
+            const bulkOps = [];
+            const requiresGeoValidation = occasion.geoRestrictionEnabled && !isAtLeast(caller.role, 'superadmin');
+
+            for (const attendee of scopedAttendance) {
+                const updateFields = { checkedInAt: now, status: attendee.status, updatedAt: now };
+
+                if (attendee.status === 'present' && requiresGeoValidation) {
+                    const loc = attendee.location;
+                    if (!loc || loc.latitude == null || loc.longitude == null) {
+                        throw new AppError('Location is required to mark attendance for this event.', 400);
+                    }
+                    if (loc.mocked) {
+                        throw new AppError('Mock location detected. Attendance denied.', 403);
+                    }
+                    
+                    // Prevent replay attacks / stale locations (older than 5 minutes)
+                    if (loc.timestamp && (now.getTime() - loc.timestamp > 5 * 60 * 1000)) {
+                        throw new AppError('Location data is too old. Please try again.', 400);
+                    }
+
+                    const distance = getDistanceInMeters(
+                        occasion.latitude,
+                        occasion.longitude,
+                        loc.latitude,
+                        loc.longitude
+                    );
+
+                    if (distance === null || distance > (occasion.geofenceRadius || 150)) {
+                        throw new AppError(`You are outside the allowed attendance area. Distance: ${Math.round(distance)}m (Max: ${occasion.geofenceRadius || 150}m).`, 403);
+                    }
+
+                    updateFields.attendanceLatitude = loc.latitude;
+                    updateFields.attendanceLongitude = loc.longitude;
+                    updateFields.distanceFromOccasion = distance;
+                    updateFields.geoValidated = true;
+                    updateFields.locationVerificationTimestamp = loc.timestamp ? new Date(loc.timestamp) : now;
                 }
-            }));
-            
+
+                bulkOps.push({
+                    updateOne: {
+                        filter: { tenantId: caller.tenantId, user: attendee.userId, occasion: id },
+                        update: { $set: updateFields },
+                        upsert: true
+                    }
+                });
+            }
+
             await attendanceClient.bulkWrite(bulkOps);
             
             // Optionally, we could still emit socket events, but emit a single bulk event instead

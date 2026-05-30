@@ -10,7 +10,12 @@ const occasionSchema = new mongoose.Schema(
         time: { type: Date, default: Date.now },
         start_at: { type: Date, default: Date.now },
         ends_at: { type: Date, default: Date.now },
-        location: { type: String, default: '' },
+        location: { type: String, default: '' }, // Legacy location description
+        locationName: { type: String, default: '' }, // Geocoded name
+        latitude: { type: Number, default: null },
+        longitude: { type: Number, default: null },
+        geofenceRadius: { type: Number, default: 150 }, // In meters
+        geoRestrictionEnabled: { type: Boolean, default: false },
         name: { type: String, default: '' },
         description: { type: String, default: '' },
         created_by: { type: String, default: '' },
@@ -60,5 +65,7 @@ const occasionSchema = new mongoose.Schema(
 occasionSchema.index({ tenantId: 1, start_at: -1, status: 1 });
 occasionSchema.index({ tenantId: 1, status: 1, "events.party": 1 });
 occasionSchema.index({ tenantId: 1, status: 1 });
+const cacheBuster = require('../utils/cacheBuster');
+occasionSchema.plugin(cacheBuster);
 
 module.exports = mongoose.model('occasions', occasionSchema);

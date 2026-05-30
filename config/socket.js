@@ -20,6 +20,22 @@ const initializeSocket = (server) => {
             }
         });
 
+        // New listener for announcement groups
+        socket.on('joinAnnouncementGroup', (groupId) => {
+            if (groupId) {
+                socket.join(`announcement:${groupId}`);
+                console.log(`Socket ${socket.id} joined announcement group: ${groupId}`);
+            }
+        });
+
+        // Leave announcement group (e.g., when removed from a custom group)
+        socket.on('leaveAnnouncementGroup', (groupId) => {
+            if (groupId) {
+                socket.leave(`announcement:${groupId}`);
+                console.log(`Socket ${socket.id} left announcement group: ${groupId}`);
+            }
+        });
+
         socket.on('disconnect', () => {
             console.log('Client disconnected', socket.id);
         });

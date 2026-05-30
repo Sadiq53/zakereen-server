@@ -52,10 +52,20 @@ exports.getGlobalStats = asyncHandler(async (req, res) => {
     res.status(200).json({ success: true, data: stats });
 });
 
+exports.getAllTenantsAnalytics = asyncHandler(async (req, res) => {
+    const analytics = await tenantService.getAllTenantsAnalytics();
+    res.status(200).json({ success: true, data: analytics });
+});
+
 exports.getAuditLogs = asyncHandler(async (req, res) => {
-    // We import AuditLog dynamically or at top. 
-    // Wait, let's just use the TenantService to fetch it or query it directly here.
     const AuditLog = require('../models/auditLog');
-    const logs = await AuditLog.find().sort({ timestamp: -1 }).limit(100).populate('actorId', 'userid');
+    const logs = await AuditLog.find().sort({ timestamp: -1 }).limit(100).populate('actor', 'userid');
     res.status(200).json({ success: true, data: logs });
+});
+
+exports.getTenantMiqaats = asyncHandler(async (req, res) => {
+    const { id } = req.params;
+    const limit = parseInt(req.query.limit) || 5;
+    const miqaats = await tenantService.getTenantMiqaats(id, limit);
+    res.status(200).json({ success: true, data: miqaats });
 });

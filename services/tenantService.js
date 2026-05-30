@@ -1,7 +1,22 @@
 const Tenant = require('../models/tenant');
 const User = require('../models/users');
+const Occasion = require('../models/occassion');
+const Attendance = require('../models/attendance');
+const Group = require('../models/group');
+const mongoose = require('mongoose');
 const AppError = require('../utils/AppError');
 const { hashPassword } = require('../middlewares/auth');
+const cacheService = require('./cacheService');
+const { getIO } = require('../config/socket');
+
+function emitGlobalTenantUpdate() {
+    try {
+        const io = getIO();
+        io.emit('tenantUpdated'); // generic broadcast signal
+    } catch (err) {
+        console.warn('Socket not initialized, could not emit event');
+    }
+}
 
 /**
  * Create a new tenant.
@@ -26,6 +41,7 @@ exports.createTenant = async (data) => {
     });
 
     await tenant.save();
+    emitGlobalTenantUpdate();
     return tenant;
 };
 
@@ -73,6 +89,7 @@ exports.assignCoordinator = async (tenantId, coordinatorData) => {
     tenant.status = 'active';
     await tenant.save();
 
+    emitGlobalTenantUpdate();
     return { tenant, coordinator: user };
 };
 
@@ -108,6 +125,7 @@ exports.updateTenant = async (id, data) => {
     }
 
     await tenant.save();
+    emitGlobalTenantUpdate();
     return tenant;
 };
 
@@ -123,6 +141,7 @@ exports.suspendTenant = async (id, reason) => {
     tenant.suspendedAt = new Date();
     tenant.suspendReason = reason || '';
     await tenant.save();
+    emitGlobalTenantUpdate();
     return tenant;
 };
 
@@ -140,6 +159,7 @@ exports.reactivateTenant = async (id) => {
     tenant.suspendedAt = null;
     tenant.suspendReason = '';
     await tenant.save();
+    emitGlobalTenantUpdate();
     return tenant;
 };
 
@@ -157,29 +177,241 @@ exports.deleteTenant = async (id) => {
 };
 
 /**
- * Get tenant stats (user count, occasion count, etc.)
+ * Fetch all tenants with aggregated mass-analytics
  */
-exports.getTenantStats = async (tenantId) => {
-    const [userCount, occasionCount, attendanceCount] = await Promise.all([
-        User.countDocuments({ tenantId }),
-        require('../models/occassion').countDocuments({ tenantId }),
-        require('../models/attendance').countDocuments({ tenantId }),
-    ]);
+exports.getAllTenantsAnalytics = async () => {
+    const tenants = await Tenant.find({ status: { $ne: 'deleted' } }).lean();
+    const results = [];
 
-    return { userCount, occasionCount, attendanceCount };
+    // Ideally we can do a massive aggregate, but for now concurrent promises works given small N
+    await Promise.all(tenants.map(async (t) => {
+        const tenantId = t._id;
+        const [userCount, occasionCount, groupCount, attendanceCount, participationAgg] = await Promise.all([
+            User.countDocuments({ tenantId, role: { $ne: 'rootadmin' } }),
+            Occasion.countDocuments({ tenantId }),
+            Group.countDocuments({ tenantId }),
+            Attendance.countDocuments({ tenantId, status: 'present' }),
+            Occasion.aggregate([
+                { $match: { tenantId: tenantId } },
+                { $unwind: "$events" },
+                { $match: { "events.party": { $ne: null }, "events.party": { $ne: "" } } },
+                { $group: { _id: { occasionId: "$_id", partyId: "$events.party" } } },
+                { $count: "uniqueParticipations" }
+            ])
+        ]);
+
+        const maxPotentialAttendance = userCount * occasionCount;
+        const avgAttendanceRatio = maxPotentialAttendance > 0 
+            ? ((attendanceCount / maxPotentialAttendance) * 100)
+            : 0;
+
+        const uniqueParticipations = participationAgg.length > 0 ? participationAgg[0].uniqueParticipations : 0;
+        const avgParticipationRatio = (occasionCount > 0 && groupCount > 0)
+            ? ((uniqueParticipations / (occasionCount * groupCount)) * 100)
+            : 0;
+
+        results.push({
+            tenantId: t._id,
+            name: t.name,
+            userCount,
+            occasionCount,
+            attendanceCount,
+            maxPotentialAttendance,
+            avgAttendanceRatio: parseFloat(avgAttendanceRatio.toFixed(1)),
+            avgParticipationRatio: parseFloat(avgParticipationRatio.toFixed(1))
+        });
+    }));
+
+    return results;
 };
 
 /**
- * Get global platform stats (cross-tenant).
+ * Get tenant stats (user count, occasion count, attendance ratios, participation metrics)
+ * Uses Redis caching for performance.
+ */
+exports.getTenantStats = async (tenantId) => {
+    const cacheKey = `stats:tenant:v2:${tenantId}`;
+    const cached = await cacheService.get(cacheKey);
+    if (cached) return cached;
+
+    const tenantObjectId = new mongoose.Types.ObjectId(tenantId);
+
+    const [userCount, occasionCount, groupCount, attendanceCount, partyAgg, participationAgg, attendeeAgg] = await Promise.all([
+        User.countDocuments({ tenantId, role: { $ne: 'rootadmin' } }),
+        Occasion.countDocuments({ tenantId }),
+        Group.countDocuments({ tenantId }),
+        Attendance.countDocuments({ tenantId, status: 'present' }),
+        
+        // Aggregate party participation logic across all Miqaats for this tenant
+        Occasion.aggregate([
+            { $match: { tenantId: tenantObjectId } },
+            { $unwind: "$events" },
+            { $group: {
+                _id: "$events.party",
+                count: { $sum: 1 }
+            }},
+            { $match: { _id: { $ne: null }, _id: { $ne: "" } } },
+            { $addFields: { partyObjectId: { $toObjectId: "$_id" } } },
+            { $lookup: {
+                from: "groups",
+                localField: "partyObjectId",
+                foreignField: "_id",
+                as: "partyData"
+            }},
+            { $unwind: { path: "$partyData", preserveNullAndEmptyArrays: true } },
+            { $project: {
+                partyId: "$_id",
+                partyName: { $ifNull: ["$partyData.name", "Unknown Party"] },
+                count: 1
+            }},
+            { $sort: { count: -1 } },
+            { $limit: 5 }
+        ]),
+
+        // Average Participation logic
+        Occasion.aggregate([
+            { $match: { tenantId: tenantObjectId } },
+            { $unwind: "$events" },
+            { $match: { "events.party": { $ne: null }, "events.party": { $ne: "" } } },
+            { $group: { _id: { occasionId: "$_id", partyId: "$events.party" } } },
+            { $count: "uniqueParticipations" }
+        ]),
+
+        // Top/Lowest Attendees Logic
+        Attendance.aggregate([
+            { $match: { tenantId: tenantObjectId } },
+            { $group: { 
+                _id: "$user", 
+                totalRecords: { $sum: 1 }, 
+                presentCount: { $sum: { $cond: [{ $eq: ["$status", "present"] }, 1, 0] } } 
+            }},
+            { $match: { totalRecords: { $gt: 0 } } },
+            { $project: {
+                _id: 1,
+                ratio: { $multiply: [{ $divide: ["$presentCount", "$totalRecords"] }, 100] },
+                presentCount: 1,
+                totalRecords: 1
+            }},
+            { $lookup: {
+                from: "users",
+                localField: "_id",
+                foreignField: "_id",
+                as: "user"
+            }},
+            { $unwind: "$user" },
+            { $project: {
+                userId: "$user._id",
+                name: "$user.fullname",
+                its: "$user.userid",
+                ratio: 1,
+                presentCount: 1,
+                totalRecords: 1
+            }},
+            { $sort: { ratio: -1, presentCount: -1 } }
+        ])
+    ]);
+
+    // Average attendance ratio calculation
+    const maxPotential = userCount * occasionCount;
+    const avgAttendanceRatio = maxPotential > 0 ? ((attendanceCount / maxPotential) * 100).toFixed(1) : 0;
+
+    // Average Participation Ratio calculation
+    const uniqueParticipations = participationAgg.length > 0 ? participationAgg[0].uniqueParticipations : 0;
+    const avgParticipationRatio = (occasionCount > 0 && groupCount > 0)
+        ? ((uniqueParticipations / (occasionCount * groupCount)) * 100)
+        : 0;
+
+    const topAttendees = attendeeAgg.slice(0, 10).map(a => ({
+        ...a,
+        ratio: parseFloat(a.ratio.toFixed(1))
+    }));
+    
+    // Sort ascending for lowest, but only consider people with > 0 records
+    const lowestAttendees = [...attendeeAgg]
+        .sort((a, b) => a.ratio - b.ratio)
+        .slice(0, 10)
+        .map(a => ({
+            ...a,
+            ratio: parseFloat(a.ratio.toFixed(1))
+        }));
+
+    const stats = { 
+        userCount, 
+        occasionCount, 
+        attendanceCount,
+        avgAttendanceRatio: parseFloat(avgAttendanceRatio),
+        avgParticipationRatio: parseFloat(avgParticipationRatio.toFixed(1)),
+        topParties: partyAgg.map(p => ({ party: p.partyName, count: p.count })),
+        topAttendees,
+        lowestAttendees
+    };
+
+    await cacheService.set(cacheKey, stats, 300); // Cache for 5 mins
+
+    return stats;
+};
+
+/**
+ * Get global platform stats (cross-tenant) with advanced analytics.
+ * Cached in Redis to prevent heavy DB load.
  */
 exports.getGlobalStats = async () => {
-    const [tenantCounts, totalUsers, totalOccasions] = await Promise.all([
+    const cacheKey = 'stats:global:v2';
+    const cached = await cacheService.get(cacheKey);
+    if (cached) return cached;
+
+    const [tenantCounts, totalUsers, totalOccasions, attendanceAgg, topKalamsAgg, topPartiesAgg] = await Promise.all([
         Tenant.aggregate([
             { $match: { status: { $ne: 'deleted' } } },
             { $group: { _id: '$status', count: { $sum: 1 } } },
         ]),
         User.countDocuments({ role: { $ne: 'rootadmin' } }),
-        require('../models/occassion').countDocuments(),
+        Occasion.countDocuments(),
+        
+        // Overall attendance calculation
+        Attendance.aggregate([
+            { $group: {
+                _id: "$status",
+                count: { $sum: 1 }
+            }}
+        ]),
+
+        // Top 5 recited Kalams across the platform
+        Occasion.aggregate([
+            { $unwind: "$events" },
+            { $group: {
+                _id: "$events.name",
+                count: { $sum: 1 }
+            }},
+            { $match: { _id: { $ne: null }, _id: { $ne: "" } } },
+            { $sort: { count: -1 } },
+            { $limit: 5 }
+        ]),
+        
+        // Top 5 Parties across the platform
+        Occasion.aggregate([
+            { $unwind: "$events" },
+            { $group: {
+                _id: "$events.party",
+                count: { $sum: 1 }
+            }},
+            { $match: { _id: { $ne: null }, _id: { $ne: "" } } },
+            { $addFields: { partyObjectId: { $toObjectId: "$_id" } } },
+            { $lookup: {
+                from: "groups",
+                localField: "partyObjectId",
+                foreignField: "_id",
+                as: "partyData"
+            }},
+            { $unwind: { path: "$partyData", preserveNullAndEmptyArrays: true } },
+            { $project: {
+                partyId: "$_id",
+                partyName: { $ifNull: ["$partyData.name", "Unknown Party"] },
+                count: 1
+            }},
+            { $sort: { count: -1 } },
+            { $limit: 5 }
+        ])
     ]);
 
     const tenants = tenantCounts.reduce((acc, curr) => {
@@ -187,10 +419,115 @@ exports.getGlobalStats = async () => {
         return acc;
     }, {});
 
-    return {
+    const totalTenants = Object.values(tenants).reduce((a, b) => a + b, 0);
+
+    // Removed inaccurate attendanceAgg variables as we use allTenantsAnalytics now
+
+    // Fetch mass analytics for global leaderboards
+    const allTenantsAnalytics = await exports.getAllTenantsAnalytics();
+    
+    // Platform Avg Attendance (Mathematically Accurate across all Jamaats)
+    let globalPresentCount = 0;
+    let globalMaxPotential = 0;
+    for (const r of allTenantsAnalytics) {
+        globalPresentCount += r.attendanceCount;
+        globalMaxPotential += r.maxPotentialAttendance;
+    }
+    const platformAvgAttendance = globalMaxPotential > 0 
+        ? ((globalPresentCount / globalMaxPotential) * 100) 
+        : 0;
+
+    // Top 10 Consistent Jamaats (Attendance Ratio)
+    const topConsistentJamaats = [...allTenantsAnalytics]
+        .sort((a, b) => b.avgAttendanceRatio - a.avgAttendanceRatio)
+        .slice(0, 10);
+
+    // Top 5 Highest Participation Ratio Jamaats
+    const topParticipationJamaats = [...allTenantsAnalytics]
+        .sort((a, b) => b.avgParticipationRatio - a.avgParticipationRatio)
+        .slice(0, 5);
+
+    // Platform Avg Participation Ratio
+    let totalPartRatio = 0;
+    let countForGlobalPart = 0;
+    for (const r of allTenantsAnalytics) {
+        if (r.occasionCount > 0) { // Only count jamaats that have miqaats
+            totalPartRatio += r.avgParticipationRatio;
+            countForGlobalPart++;
+        }
+    }
+    const platformAvgParticipation = countForGlobalPart > 0 ? (totalPartRatio / countForGlobalPart) : 0;
+
+    const stats = {
         tenants,
-        totalTenants: Object.values(tenants).reduce((a, b) => a + b, 0),
+        totalTenants,
         totalUsers,
         totalOccasions,
+        platformAvgAttendance: parseFloat(platformAvgAttendance.toFixed(1)),
+        platformAvgParticipation: parseFloat(platformAvgParticipation.toFixed(1)),
+        topKalams: topKalamsAgg.map(k => ({ name: k._id, count: k.count })),
+        topParties: topPartiesAgg.map(p => ({ party: p.partyName, count: p.count })),
+        topConsistentJamaats,
+        topParticipationJamaats
     };
+
+    await cacheService.set(cacheKey, stats, 300); // Cache for 5 mins
+
+    return stats;
+};
+
+/**
+ * Fetch Miqaat (Occasion) history for a specific Jamaat/Tenant.
+ */
+exports.getTenantMiqaats = async (tenantId, limit = 5) => {
+    const cacheKey = `miqaats:tenant:v1:${tenantId}:${limit}`;
+    const cached = await cacheService.get(cacheKey);
+    if (cached) return cached;
+
+    // We can fetch occasions and manually inject attendance stats for each
+    const miqaats = await Occasion.find({ tenantId })
+        .select('_id name start_at ends_at locationName created_by events images tenantId') // Explicitly select images and created_by
+        .populate('created_by', 'name')
+        .sort({ start_at: -1 })
+        .limit(limit)
+        .lean();
+
+    // Attach basic attendance stats to each Miqaat for the cards
+    const enhancedMiqaats = await Promise.all(miqaats.map(async (m) => {
+        const [uniquePresentUsers, totalExpected] = await Promise.all([
+            Attendance.distinct('user', { occasion: m._id, status: 'present' }),
+            User.countDocuments({ tenantId, role: { $ne: 'rootadmin' } })
+        ]);
+        
+        let totalPresent = uniquePresentUsers.length;
+        if (totalPresent > totalExpected && totalExpected > 0) totalPresent = totalExpected; // Failsafe
+        
+        const attendanceRatio = totalExpected > 0 ? ((totalPresent / totalExpected) * 100).toFixed(1) : 0;
+        
+        // Populate party names for events
+        const enhancedEvents = await Promise.all((m.events || []).map(async (ev) => {
+            let partyName = ev.party;
+            if (ev.party) {
+                try {
+                    const partyDoc = await Group.findById(ev.party).select('name').lean();
+                    if (partyDoc && partyDoc.name) partyName = partyDoc.name;
+                } catch (e) {} // Safe catch for cast errors
+            }
+            return { ...ev, partyName };
+        }));
+
+        return {
+            ...m,
+            events: enhancedEvents,
+            attendanceStats: {
+                present: totalPresent,
+                expected: totalExpected,
+                ratio: parseFloat(attendanceRatio)
+            }
+        };
+    }));
+
+    await cacheService.set(cacheKey, enhancedMiqaats, 300);
+
+    return enhancedMiqaats;
 };

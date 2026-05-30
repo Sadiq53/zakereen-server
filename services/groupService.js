@@ -2,6 +2,7 @@ const groupClient = require('../models/group');
 const userClient = require('../models/users');
 const { hashPassword } = require('../middlewares/auth');
 const AppError = require('../utils/AppError');
+const { emitGroupCreated, emitGroupUpdated, emitGroupDeleted, emitUserUpdated } = require('../utils/socketEmit');
 
 exports.getAllGroups = async (tenantId) => {
     const query = tenantId ? { tenantId } : {};
@@ -75,6 +76,11 @@ exports.createGroup = async (tenantId, name, adminId, userDetails) => {
 
     const newGroup = await groupClient.create(createGroup);
 
+    emitGroupCreated(newGroup);
+    if (createdUser) {
+        emitUserUpdated(createdUser);
+    }
+
     return {
         group: newGroup,
         ...(createdUser && { user: createdUser }),
@@ -93,6 +99,8 @@ exports.updateGroup = async (caller, groupId, name) => {
 
     group.name = name || group.name;
     await group.save();
+
+    emitGroupUpdated(group);
 
     return group;
 };
@@ -115,6 +123,8 @@ exports.deleteGroup = async (groupId) => {
         { belongsto: group.name },
         { $set: { belongsto: '' } }
     );
+    
+    emitGroupDeleted(group.tenantId, groupId);
 };
 
 exports.transferRole = async (caller, groupId, newAdminId) => {
@@ -145,6 +155,12 @@ exports.transferRole = async (caller, groupId, newAdminId) => {
 
     group.admin = newAdminId;
     await group.save();
+
+    emitGroupUpdated(group);
+    emitUserUpdated(newAdminUser);
+    if (oldAdminUser) {
+        emitUserUpdated(oldAdminUser);
+    }
 
     return group;
 };
@@ -177,6 +193,9 @@ exports.addMember = async (caller, groupId, userId) => {
     await user.save();
     await group.save();
 
+    emitGroupUpdated(group);
+    emitUserUpdated(user);
+
     return group;
 };
 
@@ -208,6 +227,10 @@ exports.transferMember = async (caller, groupId, userId, newGroupId) => {
     await user.save();
     await newGroup.save();
 
+    emitGroupUpdated(group);
+    emitGroupUpdated(newGroup);
+    emitUserUpdated(user);
+
     return newGroup;
 };
 
@@ -230,6 +253,9 @@ exports.removeMember = async (caller, groupId, userId) => {
     user.belongsto = '';
     await user.save();
     await group.save();
+
+    emitGroupUpdated(group);
+    emitUserUpdated(user);
 };
 
 exports.leaveGroup = async (caller, userId) => {
@@ -255,4 +281,7 @@ exports.leaveGroup = async (caller, userId) => {
 
     caller.belongsto = '';
     await caller.save();
+
+    emitGroupUpdated(group);
+    emitUserUpdated(caller);
 };

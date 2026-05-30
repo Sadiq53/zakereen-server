@@ -36,13 +36,13 @@ async function startOccasion(occasionId) {
  */
 async function endOccasion(occasionId) {
     const occasion = await occassionClient.findById(occasionId);
-    if (!occasion || occasion.status !== 'started') return;
+    if (!occasion || occasion.status === 'ended') return;
 
     occasion.status = 'ended';
     occasion.updatedat = new Date();
     await occasion.save();
 
-    console.log(`✅ Ended occasion ${occasionId} at ${new Date().toISOString()}`);
+    console.log(`✅ Ended occasion ${occasionId} (was "${occasion.status}") at ${new Date().toISOString()}`);
 }
 
 /**
@@ -65,9 +65,9 @@ async function attendanceReminder(occasionId) {
         ).lean();
         const attendedUserIds = new Set(attendedRecords.map(r => r.user.toString()));
 
-        // Get ALL users (we want to notify those who haven't attended)
+        // Get ALL users within this tenant (we want to notify those who haven't attended)
         const allUsers = await userClient.find(
-            { fcmTokens: { $exists: true, $ne: [] } },
+            { tenantId: occasion.tenantId, fcmTokens: { $exists: true, $ne: [] } },
             { _id: 1, fcmTokens: 1 }
         ).lean();
 
