@@ -1,4 +1,5 @@
 const { cacheClient: redisClient } = require('../config/redis');
+const logger = require('../utils/logger');
 
 class CacheService {
     async get(key) {
@@ -7,7 +8,7 @@ class CacheService {
             const data = await redisClient.get(key);
             return data ? JSON.parse(data) : null;
         } catch (error) {
-            console.error(`Redis GET error for key ${key}:`, error.message);
+            logger.error(`Redis GET error for key ${key}:`, error.message);
             return null;
         }
     }
@@ -17,7 +18,7 @@ class CacheService {
         try {
             await redisClient.setex(key, ttlSeconds, JSON.stringify(data));
         } catch (error) {
-            console.error(`Redis SET error for key ${key}:`, error.message);
+            logger.error(`Redis SET error for key ${key}:`, error.message);
         }
     }
 
@@ -39,7 +40,7 @@ class CacheService {
             ];
             await redisClient.del(...keys);
         } catch (error) {
-            console.error(`Redis tenant invalidation error for ${tenantId}:`, error.message);
+            logger.error(`Redis tenant invalidation error for ${tenantId}:`, error.message);
         }
     }
 
@@ -52,7 +53,7 @@ class CacheService {
         try {
             await redisClient.del('stats:global:v2');
         } catch (error) {
-            console.error(`Redis global invalidation error:`, error.message);
+            logger.error(`Redis global invalidation error:`, error.message);
         }
     }
 }

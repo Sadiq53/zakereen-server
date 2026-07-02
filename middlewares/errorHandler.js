@@ -1,12 +1,17 @@
 const AppError = require('../utils/AppError');
+const logger = require('../utils/logger');
 
 const errorHandler = (err, req, res, next) => {
     let error = { ...err };
     error.message = err.message;
     error.statusCode = err.statusCode || 500;
 
-    // Log error for developers
-    console.error(`[Error] ${err.stack || err}`);
+    // Use structured logger instead of console.error
+    if (error.statusCode >= 500) {
+        logger.error({ err }, 'Critical Internal Server Error');
+    } else {
+        logger.warn({ err: { message: err.message, name: err.name, statusCode: error.statusCode } }, 'Operational Error');
+    }
 
     // Mongoose bad ObjectId
     if (err.name === 'CastError') {

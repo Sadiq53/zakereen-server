@@ -1,4 +1,5 @@
 const AuditLog = require('../models/auditLog');
+const logger = require('../utils/logger');
 
 /**
  * Standardized audit logging service
@@ -36,7 +37,7 @@ exports.logAudit = async (actor, action, resource, resourceId, details = {}, ip 
         // We log the error but do not throw, as we don't want audit logging failure 
         // to crash the main transaction unless strictly required, though using a session
         // will naturally fail the transaction if save fails.
-        console.error("Failed to write audit log:", error);
+        logger.error("Failed to write audit log:", error);
         if (session) throw error;
     }
 };

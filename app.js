@@ -17,8 +17,31 @@ const { initializeSocket } = require("./config/socket");
 const { seedRootAdmin } = require("./config/seedAdmin");
 
 
+const { requestContextMiddleware } = require('./middlewares/requestContext');
+const pinoHttp = require('pino-http');
+const logger = require('./utils/logger');
+
 // Trust proxy (required when behind ngrok, nginx, or any reverse proxy)
 app.set('trust proxy', 1);
+
+// Initialize Request Context (AsyncLocalStorage)
+app.use(requestContextMiddleware);
+
+// Initialize HTTP request logging
+app.use(pinoHttp({
+    logger,
+    autoLogging: {
+        ignore: (req) => req.url === '/api/v1/health'
+    },
+    customLogLevel: function (req, res, err) {
+        if (res.statusCode >= 500 || err) return 'error';
+        if (res.statusCode >= 400) return 'warn';
+        return 'info';
+    },
+    customSuccessMessage: function (req, res) {
+        return `${req.method} ${req.url} completed with status ${res.statusCode}`;
+    },
+}));
 
 // Disable ETags to prevent React Native 304 empty body bug
 app.set('etag', false);

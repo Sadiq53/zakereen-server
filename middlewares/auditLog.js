@@ -1,4 +1,5 @@
 const AuditLog = require('../models/auditLog');
+const logger = require('../utils/logger');
 
 /**
  * Middleware factory: logs actions to the immutable audit trail.
@@ -29,7 +30,7 @@ const auditAction = (action, resource) => {
                     },
                     ip: req.ip,
                     userAgent: req.headers['user-agent'] || '',
-                }).catch(err => console.error('Audit log write failed:', err));
+                }).catch(err => logger.error('Audit log write failed:', err));
             }
 
             return originalJson(data);

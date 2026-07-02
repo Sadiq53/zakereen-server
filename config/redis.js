@@ -1,4 +1,5 @@
 const Redis = require('ioredis');
+const logger = require('../utils/logger');
 require('dotenv').config();
 
 const REDIS_URL = process.env.REDIS_URL || 'redis://127.0.0.1:6379';
@@ -25,14 +26,14 @@ try {
     });
 
     cacheClient.on('error', (err) => {
-        console.error('Redis (cache) connection error:', err.message);
+        logger.error('Redis (cache) connection error:', err.message);
     });
 
     cacheClient.on('connect', () => {
-        console.log('✅ Connected to Redis (cache)');
+        logger.info('✅ Connected to Redis (cache)');
     });
 } catch (error) {
-    console.error('Failed to initialize Redis cache client:', error);
+    logger.error('Failed to initialize Redis cache client:', error);
     cacheClient = null;
 }
 
@@ -46,14 +47,14 @@ try {
     });
 
     bullClient.on('error', (err) => {
-        console.error('Redis (BullMQ) connection error:', err.message);
+        logger.error('Redis (BullMQ) connection error:', err.message);
     });
 
     bullClient.on('connect', () => {
-        console.log('✅ Connected to Redis (BullMQ)');
+        logger.info('✅ Connected to Redis (BullMQ)');
     });
 } catch (error) {
-    console.error('Failed to initialize Redis BullMQ client:', error);
+    logger.error('Failed to initialize Redis BullMQ client:', error);
     bullClient = null;
 }
 

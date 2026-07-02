@@ -2,6 +2,7 @@ const moment = require('moment-hijri');
 const islamicEvents = require('../constants/islamicEvents');
 const userClient = require('../models/users');
 const { sendMulticastNotification, buildDataPayload } = require('../utils/fcmUtils');
+const logger = require('../utils/logger');
 
 /**
  * Sweeps for high-priority Miqaats happening tomorrow and alerts all admins.
@@ -21,7 +22,7 @@ async function checkMiqaatReminders() {
         const highPriorityMiqaats = eventMatch.miqaats.filter(m => m.priority === 1);
         if (highPriorityMiqaats.length === 0) return;
 
-        console.log(`[Miqaat Job] Found ${highPriorityMiqaats.length} high priority miqaats for tomorrow (${hDate}/${hMonth})`);
+        logger.info({ count: highPriorityMiqaats.length, date: `${hDate}/${hMonth}` }, 'Found high priority miqaats for tomorrow');
 
         // Get all admin users across all tenants
         const admins = await userClient.find({
@@ -35,7 +36,7 @@ async function checkMiqaatReminders() {
         }
 
         if (tokens.length === 0) {
-            console.log('[Miqaat Job] No admin tokens found to notify.');
+            logger.info('No admin tokens found to notify for Miqaat');
             return;
         }
 
@@ -50,11 +51,11 @@ async function checkMiqaatReminders() {
             });
 
             await sendMulticastNotification(tokens, title, body, dataPayload);
-            console.log(`✅ [Miqaat Job] Sent reminder for "${miqaat.title}" to ${tokens.length} admins.`);
+            logger.info({ miqaatTitle: miqaat.title, tokensCount: tokens.length }, 'Sent reminder for Miqaat to admins');
         }
 
     } catch (error) {
-        console.error('[Miqaat Job] Error checking miqaat reminders:', error);
+        logger.error({ err: error }, 'Error checking miqaat reminders');
     }
 }
 

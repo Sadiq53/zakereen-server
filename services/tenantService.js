@@ -8,6 +8,7 @@ const AppError = require('../utils/AppError');
 const { hashPassword } = require('../middlewares/auth');
 const cacheService = require('./cacheService');
 const { getIO } = require('../config/socket');
+const logger = require('../utils/logger');
 
 async function emitGlobalTenantUpdate() {
     try {
@@ -18,7 +19,7 @@ async function emitGlobalTenantUpdate() {
         const io = getIO();
         io.emit('tenantUpdated'); // generic broadcast signal
     } catch (err) {
-        console.warn('Socket or Cache error during global update:', err.message);
+        logger.warn('Socket or Cache error during global update:', err.message);
     }
 }
 

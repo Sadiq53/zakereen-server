@@ -1,4 +1,5 @@
 const userClient = require('../models/users');
+const logger = require('./logger');
 
 /**
  * Builds a robust and scalable data payload for FCM notifications.
@@ -91,7 +92,7 @@ async function sendMulticastNotification(rawTokens, title, body, dataPayload) {
                 }
             };
             const response = await admin.messaging().sendEachForMulticast(message);
-            console.log(`FCM: Batch ${Math.floor(i / BATCH_SIZE) + 1} — Success: ${response.successCount}, Failure: ${response.failureCount}`);
+            logger.info(`FCM: Batch ${Math.floor(i / BATCH_SIZE) + 1} — Success: ${response.successCount}, Failure: ${response.failureCount}`);
 
             // Log and clean up failed tokens
             if (response.failureCount > 0) {
@@ -99,7 +100,7 @@ async function sendMulticastNotification(rawTokens, title, body, dataPayload) {
                 response.responses.forEach((resp, idx) => {
                     if (!resp.success) {
                         failedTokens.push(batch[idx]);
-                        console.error(`FCM token failure:`, resp.error?.code, resp.error?.message);
+                        logger.error(`FCM token failure:`, resp.error?.code, resp.error?.message);
                     }
                 });
                 // Remove invalid tokens from the database
@@ -108,11 +109,11 @@ async function sendMulticastNotification(rawTokens, title, body, dataPayload) {
                         { fcmTokens: { $in: failedTokens } },
                         { $pullAll: { fcmTokens: failedTokens } }
                     );
-                    console.log(`FCM: Cleaned up ${failedTokens.length} invalid tokens from DB.`);
+                    logger.info(`FCM: Cleaned up ${failedTokens.length} invalid tokens from DB.`);
                 }
             }
         } catch (error) {
-            console.error('FCM Error sending multicast notification:', error);
+            logger.error('FCM Error sending multicast notification:', error);
         }
     }
 }
@@ -150,7 +151,7 @@ const NOTIFICATION_TEMPLATES = {
 async function dispatchNotification(eventType, occasion, options = {}) {
     const template = NOTIFICATION_TEMPLATES[eventType];
     if (!template) {
-        console.error(`FCM: Unknown notification event type: ${eventType}`);
+        logger.error(`FCM: Unknown notification event type: ${eventType}`);
         return;
     }
 
@@ -170,14 +171,14 @@ async function dispatchNotification(eventType, occasion, options = {}) {
         }
 
         if (tokens.length === 0) {
-            console.log(`FCM: No tokens found for ${eventType}, skipping.`);
+            logger.info(`FCM: No tokens found for ${eventType}, skipping.`);
             return;
         }
 
         await sendMulticastNotification(tokens, title, body, dataPayload);
-        console.log(`FCM: Dispatched ${eventType} for occasion "${occasion.name}" to ${tokens.length} tokens`);
+        logger.info(`FCM: Dispatched ${eventType} for occasion "${occasion.name}" to ${tokens.length} tokens`);
     } catch (error) {
-        console.error(`FCM: Failed to dispatch ${eventType}:`, error);
+        logger.error(`FCM: Failed to dispatch ${eventType}:`, error);
     }
 }
 

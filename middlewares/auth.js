@@ -3,6 +3,8 @@ const jwt = require("jsonwebtoken");
 const userClient = require('../models/users')
 require('dotenv').config()
 const { isAtLeast } = require('./validateUtils');
+const { setContext } = require('./requestContext');
+const logger = require('../utils/logger');
 
 
 // Hash password function
@@ -12,7 +14,7 @@ const hashPassword = async (plainPassword) => {
     const hashedPassword = await bcrypt.hash(plainPassword, saltRounds);
     return hashedPassword;
   } catch (err) {
-    console.error('Error hashing password:', err);
+    logger.error('Error hashing password:', err);
     throw err;
   }
 };
@@ -76,10 +78,12 @@ const authAdmin = async (req, res, next) => {
     }
 
     req.user = user;
+    setContext('userId', user._id.toString());
+    if (user.tenantId) setContext('tenantId', user.tenantId.toString());
     next();
 
   } catch (error) {
-    console.error("Admin auth error:", error);
+    logger.error("Admin auth error:", error);
     return res.status(403).json({ message: "Invalid token." });
   }
 };
@@ -109,10 +113,12 @@ const authGroup = async (req, res, next) => {
     }
 
     req.user = user;
+    setContext('userId', user._id.toString());
+    if (user.tenantId) setContext('tenantId', user.tenantId.toString());
     next();
 
   } catch (error) {
-    console.error("Group auth error:", error);
+    logger.error("Group auth error:", error);
     return res.status(403).json({ message: "Invalid token." });
   }
 };
@@ -142,9 +148,11 @@ const verifyToken = async (req, res, next) => {
     req.user = user;
     req.userId = userid; // backward compat
     req.decodedToken = decoded; // raw JWT claims for resolveTenant
+    setContext('userId', user._id.toString());
+    if (user.tenantId) setContext('tenantId', user.tenantId.toString());
     next();
   } catch (error) {
-    console.error("Token verification failed:", error);
+    logger.error("Token verification failed:", error);
     return res.status(403).json({ error: "Invalid token." });
   }
 };

@@ -97,6 +97,7 @@ const { startOccasion, endOccasion, attendanceReminder } = require('./occasionJo
 const { processAnnouncementNotification } = require('./announcementJobs');
 const { checkMiqaatReminders } = require('./miqaatJobs');
 
+const logger = require('../utils/logger');
 let worker;
 let announcementWorker;
 let miqaatWorker;
@@ -120,18 +121,18 @@ function initializeWorker() {
                 await attendanceReminder(occasionId);
                 break;
             default:
-                console.warn(`Unknown job name: ${job.name}`);
+                logger.warn({ jobId: job.id, jobName: job.name }, 'Unknown job name');
         }
     }, {
         connection: redisClient
     });
 
     worker.on('completed', (job) => {
-        console.log(`✅ Job completed: ${job.name} for occasion ${job.data.occasionId}`);
+        logger.info({ jobId: job.id, jobName: job.name, occasionId: job.data?.occasionId }, 'Job completed');
     });
 
     worker.on('failed', (job, err) => {
-        console.error(`❌ Job failed: ${job.name} for occasion ${job.data.occasionId}`, err);
+        logger.error({ err, jobId: job.id, jobName: job.name, occasionId: job.data?.occasionId }, 'Job failed');
     });
 
     // ─── Announcement Notification Worker ───────────────────────────────
@@ -145,11 +146,11 @@ function initializeWorker() {
     });
 
     announcementWorker.on('completed', (job) => {
-        console.log(`✅ Announcement push completed for group: ${job.data.groupName}`);
+        logger.info({ jobId: job.id, jobName: job.name, groupName: job.data?.groupName }, 'Announcement push completed');
     });
 
     announcementWorker.on('failed', (job, err) => {
-        console.error(`❌ Announcement push failed for group: ${job.data.groupName}`, err);
+        logger.error({ err, jobId: job.id, jobName: job.name, groupName: job.data?.groupName }, 'Announcement push failed');
     });
 
     // ─── Miqaat Cron Worker ───────────────────────────────
@@ -162,11 +163,11 @@ function initializeWorker() {
     });
 
     miqaatWorker.on('completed', (job) => {
-        console.log(`✅ Miqaat cron job completed successfully`);
+        logger.info({ jobId: job.id, jobName: job.name }, 'Miqaat cron job completed successfully');
     });
 
     miqaatWorker.on('failed', (job, err) => {
-        console.error(`❌ Miqaat cron job failed`, err);
+        logger.error({ err, jobId: job.id, jobName: job.name }, 'Miqaat cron job failed');
     });
 }
 
@@ -188,11 +189,11 @@ async function sweepStaleOccasions() {
         occasion.status = 'ended';
         occasion.updatedat = now;
         await occasion.save();
-        console.log(`🧹 Sweep: auto-ended stale occasion "${occasion.name}" (ends_at: ${occasion.ends_at})`);
+        logger.info({ occasionId: occasion._id, endsAt: occasion.ends_at }, 'Sweep: auto-ended stale occasion');
     }
 
     if (stale.length > 0) {
-        console.log(`🧹 Sweep complete: ended ${stale.length} stale occasion(s)`);
+        logger.info({ staleCount: stale.length }, 'Sweep complete: ended stale occasion(s)');
     }
 
     // 2. Reschedule jobs for any active occasions that may have lost their BullMQ delayed jobs
@@ -206,7 +207,7 @@ async function sweepStaleOccasions() {
     }
 
     if (active.length > 0) {
-        console.log(`🔄 Rescheduled jobs for ${active.length} active occasion(s)`);
+        logger.info({ activeCount: active.length }, 'Rescheduled jobs for active occasion(s)');
     }
 
     // 3. Ensure the daily Miqaat Cron job is scheduled
@@ -216,7 +217,7 @@ async function sweepStaleOccasions() {
         },
         jobId: 'daily-miqaat-reminder'
     });
-    console.log(`📅 Scheduled daily Miqaat Reminder cron job`);
+    logger.info('Scheduled daily Miqaat Reminder cron job');
 }
 
 module.exports = {

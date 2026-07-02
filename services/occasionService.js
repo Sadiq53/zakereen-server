@@ -56,6 +56,7 @@ const { dispatchNotification } = require('../utils/fcmUtils');
 const AppError = require('../utils/AppError');
 const { scheduleOccasionJobs, rescheduleOccasionJobs, cancelOccasionJobs } = require('../jobs/bullQueue');
 const { getDistanceInMeters } = require('../utils/geoUtils');
+const logger = require('../utils/logger');
 
 async function markAttendance(tenantId, userId, occasionId, status) {
     const occasion = await occasionClient.findOne({ _id: occasionId, tenantId });
@@ -285,7 +286,7 @@ exports.createOccasion = async (tenantId, occasionData) => {
             excludeUserId: newOccasion.created_by
         });
     } catch (fcmError) {
-        console.error('FCM Broadcast Error:', fcmError);
+        logger.error('FCM Broadcast Error:', fcmError);
     }
 
     return newOccasion;

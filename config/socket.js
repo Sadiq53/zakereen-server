@@ -2,6 +2,7 @@ const socketIO = require('socket.io');
 const jwt = require('jsonwebtoken');
 const AnnouncementGroup = require('../models/announcementGroup');
 const mongoose = require('mongoose');
+const logger = require('../utils/logger');
 
 let io;
 
@@ -44,6 +45,8 @@ const initializeSocket = (server) => {
 
     // ── Connection Handler ───────────────────────────────────────────────────
     io.on('connection', (socket) => {
+        logger.info({ socketId: socket.id, userId: socket.user?._id, tenantId: socket.user?.tenantId }, 'Socket connected');
+
         // ── Join Tenant Room ─────────────────────────────────────────────────
         // Only allow joining the tenant room that matches the user's JWT tenantId,
         // or allow rootadmin to join any tenant room.
@@ -108,7 +111,7 @@ const initializeSocket = (server) => {
                     socket.emit('error', { message: 'Unauthorized: cannot join this announcement group' });
                 }
             } catch (err) {
-                console.error('[Socket] Error authorizing group join:', err.message);
+                logger.error({ err, socketId: socket.id, userId: socket.user?._id }, 'Error authorizing group join');
                 socket.emit('error', { message: 'Failed to join group' });
             }
         });
@@ -120,7 +123,9 @@ const initializeSocket = (server) => {
             }
         });
 
-        socket.on('disconnect', () => {});
+        socket.on('disconnect', () => {
+            logger.info({ socketId: socket.id, userId: socket.user?._id }, 'Socket disconnected');
+        });
     });
 
     return io;

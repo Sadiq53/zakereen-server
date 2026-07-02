@@ -3,6 +3,8 @@ const User = require('../models/users');
 const { sendMulticastNotification, buildDataPayload } = require('../utils/fcmUtils');
 const mongoose = require('mongoose');
 
+const logger = require('../utils/logger');
+
 /**
  * Sends push notifications for new announcement messages.
  * Called as a BullMQ worker job — runs entirely in the background.
@@ -20,7 +22,7 @@ async function processAnnouncementNotification(job) {
     try {
         const group = await AnnouncementGroup.findById(groupId).lean();
         if (!group) {
-            console.warn(`[Announcement Push] Group not found: ${groupId}`);
+            logger.warn({ groupId }, 'Announcement Push Group not found');
             return;
         }
 
@@ -48,7 +50,7 @@ async function processAnnouncementNotification(job) {
         }
 
         if (tokens.length === 0) {
-            console.log(`[Announcement Push] No tokens found for group "${groupName}", skipping.`);
+            logger.info({ groupName, groupId }, 'No tokens found for group, skipping push');
             return;
         }
 
@@ -73,9 +75,9 @@ async function processAnnouncementNotification(job) {
         });
 
         await sendMulticastNotification(tokens, title, body, dataPayload);
-        console.log(`✅ [Announcement Push] Sent to ${tokens.length} tokens for "${groupName}"`);
+        logger.info({ groupName, tokensCount: tokens.length }, 'Announcement Push Sent');
     } catch (error) {
-        console.error(`❌ [Announcement Push] Failed for group ${groupId}:`, error);
+        logger.error({ err: error, groupId }, 'Announcement Push Failed');
         throw error; // Re-throw so BullMQ marks the job as failed and can retry
     }
 }

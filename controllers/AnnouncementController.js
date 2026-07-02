@@ -5,6 +5,7 @@ const { getSignedUrl } = require("@aws-sdk/s3-request-presigner");
 const { S3Client, PutObjectCommand } = require("@aws-sdk/client-s3");
 const crypto = require("crypto");
 const { announcementQueue } = require('../jobs/bullQueue');
+const logger = require("../utils/logger");
 
 // Minimal S3 Setup for presigned URLs (Media Attachments)
 const s3Client = new S3Client({
@@ -74,7 +75,7 @@ const postMessage = expressAsyncHandler(async (req, res) => {
         content: validatedData.content || '',
         mediaType: validatedData.media?.[0]?.type || null,
         pollQuestion: validatedData.poll?.question || null,
-    }).catch(err => console.error('[Announcement] Failed to enqueue push job:', err));
+    }).catch(err => logger.error('[Announcement] Failed to enqueue push job:', err));
 
     res.status(201).json({ success: true, message });
 });

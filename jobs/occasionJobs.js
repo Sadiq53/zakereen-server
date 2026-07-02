@@ -2,6 +2,7 @@ const occassionClient = require('../models/occassion');
 const attendanceClient = require('../models/attendance');
 const userClient = require('../models/users');
 const { dispatchNotification } = require('../utils/fcmUtils');
+const logger = require('../utils/logger');
 
 /**
  * startOccasion
@@ -16,7 +17,7 @@ async function startOccasion(occasionId) {
     occasion.updatedat = new Date();
     await occasion.save();
 
-    console.log(`✅ Started occasion ${occasionId} at ${new Date().toISOString()}`);
+    logger.info({ occasionId }, 'Started occasion');
 
     if (!occasion.notifiedStarted) {
         try {
@@ -24,7 +25,7 @@ async function startOccasion(occasionId) {
             occasion.notifiedStarted = true;
             await occasion.save();
         } catch (err) {
-            console.error(`FCM: Failed to notify start for "${occasion.name}":`, err);
+            logger.error({ err, occasionId }, 'FCM: Failed to notify start');
         }
     }
 }
@@ -42,7 +43,7 @@ async function endOccasion(occasionId) {
     occasion.updatedat = new Date();
     await occasion.save();
 
-    console.log(`✅ Ended occasion ${occasionId} (was "${occasion.status}") at ${new Date().toISOString()}`);
+    logger.info({ occasionId }, 'Ended occasion');
 }
 
 /**
@@ -89,9 +90,9 @@ async function attendanceReminder(occasionId) {
             { $set: { notifiedReminder: true } }
         );
 
-        console.log(`⏰ Attendance reminder sent for "${occasion.name}" to ${tokens.length} tokens`);
+        logger.info({ occasionId, tokensCount: tokens.length }, 'Attendance reminder sent');
     } catch (err) {
-        console.error(`FCM: Attendance reminder failed for "${occasion.name}":`, err);
+        logger.error({ err, occasionId }, 'FCM: Attendance reminder failed');
     }
 }
 

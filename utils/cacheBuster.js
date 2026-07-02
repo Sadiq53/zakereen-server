@@ -1,4 +1,5 @@
 const cacheService = require('../services/cacheService');
+const logger = require('./logger');
 
 /**
  * Mongoose Plugin to automatically invalidate Redis caches when data mutates.
@@ -20,7 +21,7 @@ module.exports = function cacheBusterPlugin(schema, options) {
             // Always bust global cache since it aggregates across tenants
             await cacheService.invalidateGlobal();
         } catch (error) {
-            console.error('[CacheBuster] Error busting cache via document:', error);
+            logger.error('[CacheBuster] Error busting cache via document:', error);
         }
         if (next) next();
     };
@@ -48,7 +49,7 @@ module.exports = function cacheBusterPlugin(schema, options) {
             }
             await cacheService.invalidateGlobal();
         } catch (error) {
-            console.error('[CacheBuster] Error busting cache via query:', error);
+            logger.error('[CacheBuster] Error busting cache via query:', error);
         }
         if (next) next();
     };
