@@ -1,4 +1,51 @@
 const occasionClient = require('../models/occassion');
+const Kalam = require('../models/kalam');
+const mongoose = require('mongoose');
+const { invalidateTenantStats } = require('./tenantService');
+
+// ─── Islamic Calendar (replicated from mobile calendarUtils.ts) ──────
+const ISLAMIC_REF_DATE = new Date('2024-07-07');
+const ISLAMIC_REF_YEAR = 1446;
+const MS_PER_DAY = 86400000;
+
+function getIslamicMonthLengths(year) {
+    const leapYears = [2, 5, 7, 10, 13, 16, 18, 21, 24, 26, 29];
+    const yearInCycle = ((year - 1) % 30) + 1;
+    const isLeap = leapYears.includes(yearInCycle);
+    return [30, 29, 30, 29, 30, 29, 30, 29, 30, 29, 30, isLeap ? 30 : 29];
+}
+
+function getIslamicDate(gregDate) {
+    const d = new Date(gregDate);
+    const daysSinceRef = Math.floor((d.getTime() - ISLAMIC_REF_DATE.getTime()) / MS_PER_DAY);
+    if (isNaN(daysSinceRef)) return null;
+
+    let year = ISLAMIC_REF_YEAR;
+    let dayCounter = daysSinceRef;
+
+    while (true) {
+        const yearLength = getIslamicMonthLengths(year).reduce((a, b) => a + b, 0);
+        if (dayCounter < 0) {
+            year--;
+            dayCounter += getIslamicMonthLengths(year).reduce((a, b) => a + b, 0);
+        } else if (dayCounter >= yearLength) {
+            dayCounter -= yearLength;
+            year++;
+        } else {
+            break;
+        }
+    }
+
+    const monthLengths = getIslamicMonthLengths(year);
+    let monthIndex = 0;
+    while (dayCounter >= monthLengths[monthIndex]) {
+        dayCounter -= monthLengths[monthIndex];
+        monthIndex++;
+    }
+
+    return { year, month: monthIndex, day: dayCounter + 1 };
+}
+// ─── End Islamic Calendar ────────────────────────────────────────────
 const attendanceClient = require('../models/attendance');
 const userClient = require('../models/users');
 const { emitOccasionCreated, emitOccasionUpdated, emitOccasionDeleted, emitAttendanceUpdated } = require('../utils/socketEmit');
@@ -28,6 +75,100 @@ async function markAttendance(tenantId, userId, occasionId, status) {
     return attendance;
 }
 
+/**
+ * Shared helper: Merge attendance changes into the occasion.attendees array.
+ * Adds present users and removes non-present users.
+ * @param {Array} currentAttendees - The existing occasion.attendees array
+ * @param {Array} attendanceUpdates - Array of { userId, status } objects
+ * @returns {Array} Updated attendees array
+ */
+function _mergeAttendees(currentAttendees, attendanceUpdates) {
+    let attendees = Array.isArray(currentAttendees) ? [...currentAttendees] : [];
+
+    const presentUserIds = attendanceUpdates
+        .filter(val => val.status === 'present' && val.userId)
+        .map(val => val.userId.toString());
+
+    const nonPresentUserIds = attendanceUpdates
+        .filter(val => val.status !== 'present' && val.userId)
+        .map(val => val.userId.toString());
+
+    // Remove non-present users
+    attendees = attendees.filter(a => !nonPresentUserIds.includes(a.toString()));
+
+    // Add new present users
+    const existingUserIds = new Set(attendees.map(a => a.toString()));
+    for (const userId of presentUserIds) {
+        if (!existingUserIds.has(userId)) {
+            attendees.push(userId);
+        }
+    }
+
+    return attendees;
+}
+
+/**
+ * Shared helper: Merge incoming event ratings into existing events.
+ * @param {Array} existingEvents - The occasion's current events array
+ * @param {Array} incomingEvents - New/updated events from the request
+ * @param {string|null} restrictToCallerId - If provided, only this user's ratings are applied (for non-admin)
+ * @returns {Array} Merged events array
+ */
+function _mergeEventRatings(existingEvents, incomingEvents, restrictToCallerId = null) {
+    const incomingMap = Object.create(null);
+    incomingEvents.forEach(ev => {
+        if (ev._id) incomingMap[ev._id.toString()] = ev;
+    });
+
+    const updatedEvents = existingEvents.map(existingEv => {
+        const existingId = existingEv._id?.toString();
+        if (existingId && incomingMap[existingId]) {
+            const updateEv = incomingMap[existingId];
+
+            if (Array.isArray(updateEv.rating)) {
+                // Filter ratings to only the caller's if restricted
+                const ratingsToApply = restrictToCallerId
+                    ? updateEv.rating.filter(r => r.ratingBy?.toString() === restrictToCallerId)
+                    : updateEv.rating;
+
+                const ratingMap = Object.create(null);
+                ratingsToApply.forEach(r => {
+                    if (r.ratingBy) ratingMap[r.ratingBy.toString()] = r;
+                });
+
+                // Update existing ratings or keep them unchanged
+                let newRatings = existingEv.rating.map(r => {
+                    const key = r.ratingBy?.toString();
+                    if (key && ratingMap[key]) {
+                        return { ...(r.toObject ? r.toObject() : r), ...ratingMap[key] };
+                    }
+                    return r.toObject ? r.toObject() : r;
+                });
+
+                // Add new ratings that don't exist yet
+                ratingsToApply.forEach(r => {
+                    if (r.ratingBy && !newRatings.some(nr => nr.ratingBy?.toString() === r.ratingBy.toString())) {
+                        newRatings.push(r);
+                    }
+                });
+
+                if (restrictToCallerId) {
+                    return { ...existingEv.toObject(), rating: newRatings };
+                }
+                updateEv.rating = newRatings;
+            }
+
+            if (restrictToCallerId) {
+                return existingEv.toObject ? existingEv.toObject() : existingEv;
+            }
+            return { ...existingEv.toObject(), ...updateEv };
+        }
+        return existingEv.toObject ? existingEv.toObject() : existingEv;
+    });
+
+    return updatedEvents;
+}
+
 exports.createOccasion = async (tenantId, occasionData) => {
     let {
         name,
@@ -45,7 +186,6 @@ exports.createOccasion = async (tenantId, occasionData) => {
         locationName,
         locationId
     } = occasionData;
-    console.log(JSON.stringify(occasionData));
 
     if (locationId) {
         const SavedLocation = require('../models/savedLocation');
@@ -61,19 +201,33 @@ exports.createOccasion = async (tenantId, occasionData) => {
     }
 
 
+    if (!hijri_date && startAtIso) {
+        hijri_date = getIslamicDate(startAtIso);
+    }
+
     const startDateOnly = new Date(startAtIso);
     if (isNaN(startDateOnly)) {
         throw new AppError('Invalid start_at date', 400);
     }
     startDateOnly.setHours(0, 0, 0, 0);
 
-    const timeDate = new Date(timeIso);
-    if (isNaN(timeDate)) {
-        throw new AppError('Invalid time', 400);
+    let timeHours, timeMinutes;
+    if (typeof timeIso === 'string' && /^\d{2}:\d{2}$/.test(timeIso)) {
+        const parts = timeIso.split(':');
+        timeHours = parseInt(parts[0], 10);
+        timeMinutes = parseInt(parts[1], 10);
+    } else {
+        const timeDate = new Date(timeIso);
+        if (isNaN(timeDate)) {
+            throw new AppError('Invalid time format. Use ISO string or HH:mm', 400);
+        }
+        timeHours = timeDate.getHours();
+        timeMinutes = timeDate.getMinutes();
     }
 
-    startDateOnly.setHours(timeDate.getHours(), timeDate.getMinutes(), 0, 0);
-    const ends_at = new Date(startDateOnly.getTime() + 6 * 60 * 60 * 1000);
+    startDateOnly.setHours(timeHours, timeMinutes, 0, 0);
+    const durationMinutes = occasionData.duration || 180;
+    const ends_at = new Date(startDateOnly.getTime() + durationMinutes * 60 * 1000);
 
     if (ends_at <= startDateOnly) {
         throw new AppError('Ends time must be after start time', 400);
@@ -100,9 +254,29 @@ exports.createOccasion = async (tenantId, occasionData) => {
 
     const newOccasion = new occasionClient(payload);
     await newOccasion.save();
+
+    // Auto-save any new kalams
+    if (events && Array.isArray(events)) {
+        for (const ev of events) {
+            if (ev.name) {
+                try {
+                    await Kalam.updateOne(
+                        { name: ev.name },
+                        { $setOnInsert: { name: ev.name, type: ev.type || 'salam', createdat: new Date(), updatedat: new Date() } },
+                        { upsert: true }
+                    );
+                } catch (err) {
+                    // Ignore duplicate key or parallel insert errors
+                }
+            }
+        }
+    }
     
     // Schedule Event-Driven background jobs via BullMQ
     await scheduleOccasionJobs(newOccasion);
+    
+    // Invalidate caches
+    invalidateTenantStats(tenantId);
     
     emitOccasionCreated(newOccasion);
 
@@ -113,6 +287,157 @@ exports.createOccasion = async (tenantId, occasionData) => {
     } catch (fcmError) {
         console.error('FCM Broadcast Error:', fcmError);
     }
+
+    return newOccasion;
+};
+
+exports.createPastOccasion = async (tenantId, occasionData, caller) => {
+    let {
+        name,
+        start_at: startAtIso,
+        events,
+        time: timeIso,
+        created_by,
+        location,
+        hijri_date,
+        description,
+        latitude,
+        longitude,
+        geoRestrictionEnabled,
+        geofenceRadius,
+        locationName,
+        locationId,
+        attendance // Array of userId strings who were 'present'
+    } = occasionData;
+
+    if (locationId) {
+        const SavedLocation = require('../models/savedLocation');
+        const loc = await SavedLocation.findOne({ _id: locationId, tenantId });
+        if (loc) {
+            locationName = loc.name;
+            location = loc.name;
+            latitude = loc.latitude;
+            longitude = loc.longitude;
+            geoRestrictionEnabled = true;
+            geofenceRadius = 150;
+        }
+    }
+
+    if (!hijri_date && startAtIso) {
+        hijri_date = getIslamicDate(startAtIso);
+    }
+
+    const startDateOnly = new Date(startAtIso);
+    if (isNaN(startDateOnly)) {
+        throw new AppError('Invalid start_at date', 400);
+    }
+    startDateOnly.setHours(0, 0, 0, 0);
+
+    let timeHours, timeMinutes;
+    if (typeof timeIso === 'string' && /^\d{2}:\d{2}$/.test(timeIso)) {
+        const parts = timeIso.split(':');
+        timeHours = parseInt(parts[0], 10);
+        timeMinutes = parseInt(parts[1], 10);
+    } else {
+        const timeDate = new Date(timeIso);
+        if (isNaN(timeDate)) {
+            throw new AppError('Invalid time format. Use ISO string or HH:mm', 400);
+        }
+        timeHours = timeDate.getHours();
+        timeMinutes = timeDate.getMinutes();
+    }
+
+    startDateOnly.setHours(timeHours, timeMinutes, 0, 0);
+    const ends_at = new Date(startDateOnly.getTime() + 3 * 60 * 60 * 1000);
+
+    const payload = {
+        name,
+        description,
+        created_by,
+        hijri_date,
+        location,
+        locationName,
+        latitude,
+        longitude,
+        geoRestrictionEnabled: (latitude != null && longitude != null) ? (geoRestrictionEnabled !== false) : false,
+        geofenceRadius,
+        start_at: startDateOnly,
+        ends_at,
+        events,
+        tenantId,
+        status: 'ended', // Force ended status
+        createdAt: new Date(),
+        updatedAt: new Date(),
+        attendees: []
+    };
+
+    if (Array.isArray(attendance) && attendance.length > 0) {
+        // Handle both legacy array of strings and new array of {userId, status} objects
+        payload.attendees = attendance
+            .filter(item => item)
+            .map(item => typeof item === 'object' ? item.userId : item)
+            .map(id => id.toString());
+    }
+
+    const newOccasion = new occasionClient(payload);
+    await newOccasion.save();
+
+    // Auto-save any new kalams
+    if (events && Array.isArray(events)) {
+        for (const ev of events) {
+            if (ev.name) {
+                try {
+                    await Kalam.updateOne(
+                        { name: ev.name },
+                        { $setOnInsert: { name: ev.name, type: ev.type || 'salam', createdat: new Date(), updatedat: new Date() } },
+                        { upsert: true }
+                    );
+                } catch (err) {
+                    // Ignore duplicate key or parallel insert errors
+                }
+            }
+        }
+    }
+
+    // Handle Bulk Attendance immediately
+    if (payload.attendees.length > 0) {
+        const now = new Date(startDateOnly);
+        const bulkOps = payload.attendees.map(userId => {
+            // Find status if provided, else default to 'present'
+            const attObj = attendance.find(a => (typeof a === 'object' ? a.userId === userId : false));
+            const status = attObj && attObj.status ? attObj.status : 'present';
+            
+            return {
+                updateOne: {
+                    filter: {
+                        tenantId: new mongoose.Types.ObjectId(tenantId),
+                        user: new mongoose.Types.ObjectId(userId),
+                        occasion: newOccasion._id
+                    },
+                    update: {
+                        $set: {
+                            checkedInAt: now,
+                            status: status,
+                            updatedAt: now
+                        },
+                        $setOnInsert: {
+                            createdAt: now
+                        }
+                    },
+                    upsert: true
+                }
+            };
+        });
+        if (bulkOps.length > 0) {
+            await attendanceClient.bulkWrite(bulkOps);
+        }
+    }
+
+    // Explicitly bypass scheduleOccasionJobs and FCM broadcast
+    emitOccasionCreated(newOccasion);
+    
+    // Invalidate caches
+    invalidateTenantStats(tenantId);
 
     return newOccasion;
 };
@@ -130,12 +455,16 @@ exports.updateOccasion = async (caller, id, updateData) => {
         }
     }
 
-    const occasion = await occasionClient.findOne({ _id: id, tenantId: caller.tenantId });
+    const query = { _id: id };
+    if (caller.role !== 'rootadmin') {
+        query.tenantId = caller.tenantId;
+    }
+
+    const occasion = await occasionClient.findOne(query);
     if (!occasion) {
         throw new AppError('Occasion not found', 404);
     }
 
-    let attendees = Array.isArray(occasion.attendees) ? [...occasion.attendees] : [];
 
     if (Array.isArray(updateData.attendance)) {
         if (updateData.attendance.length > 0) {
@@ -158,78 +487,22 @@ exports.updateOccasion = async (caller, id, updateData) => {
             updatedRecords.forEach(rec => emitAttendanceUpdated(rec));
         }
 
-        const presentUserIds = updateData.attendance
-            .filter((val) => val.status === "present" && val.userId)
-            .map((val) => val.userId.toString());
-
-        const nonPresentUserIds = updateData.attendance
-            .filter((val) => val.status !== "present" && val.userId)
-            .map((val) => val.userId.toString());
-
-        // Remove non-present users
-        attendees = attendees.filter(a => !nonPresentUserIds.includes(a.toString()));
-
-        const existingUserIds = attendees.map((a) => a.toString());
-
-        for (const userId of presentUserIds) {
-            if (!existingUserIds.includes(userId)) {
-                attendees.push(userId);
-            }
-        }
-
-        occasion.attendees = attendees;
+        occasion.attendees = _mergeAttendees(occasion.attendees, updateData.attendance);
     }
 
     if (Array.isArray(updateData.events)) {
-        const incomingEvents = updateData.events;
-        const incomingMap = Object.create(null);
-        incomingEvents.forEach((ev) => {
-            if (ev._id) incomingMap[ev._id.toString()] = ev;
-        });
+        // Admin: unrestricted rating merge (null = no caller restriction)
+        let updatedEvents = _mergeEventRatings(occasion.events, updateData.events, null);
 
-        let updatedEvents = occasion.events.map((existingEv) => {
-            const existingId = existingEv._id?.toString();
-            if (existingId && incomingMap[existingId]) {
-                const updateEv = incomingMap[existingId];
-
-                if (Array.isArray(updateEv.rating)) {
-                    const ratingMap = Object.create(null);
-                    updateEv.rating.forEach((r) => {
-                        if (r.ratingBy) ratingMap[r.ratingBy.toString()] = r;
-                    });
-
-                    let newRatings = existingEv.rating.map((r) => {
-                        const key = r.ratingBy?.toString();
-                        if (key && ratingMap[key]) {
-                            return { ...r.toObject ? r.toObject() : r, ...ratingMap[key] };
-                        }
-                        return r.toObject ? r.toObject() : r;
-                    });
-
-                    updateEv.rating.forEach((r) => {
-                        if (
-                            r.ratingBy &&
-                            !newRatings.some((nr) => nr.ratingBy?.toString() === r.ratingBy.toString())
-                        ) {
-                            newRatings.push(r);
-                        }
-                    });
-
-                    updateEv.rating = newRatings;
-                }
-
-                return { ...existingEv.toObject(), ...updateEv };
-            }
-            return existingEv.toObject ? existingEv.toObject() : existingEv;
-        });
-
-        incomingEvents.forEach((ev) => {
+        // Add brand-new events that don't exist yet
+        updateData.events.forEach(ev => {
             const evIdStr = ev._id ? ev._id.toString() : null;
-            if (!evIdStr || !updatedEvents.some((e) => e._id?.toString() === evIdStr)) {
+            if (!evIdStr || !updatedEvents.some(e => e._id?.toString() === evIdStr)) {
                 updatedEvents.push(ev);
             }
         });
 
+        // Remove explicitly deleted events
         if (Array.isArray(updateData.removedEventIds) && updateData.removedEventIds.length > 0) {
             updatedEvents = updatedEvents.filter(ev => {
                 const evId = ev._id?.toString();
@@ -270,7 +543,8 @@ exports.updateOccasion = async (caller, id, updateData) => {
 };
 
 exports.endOccasion = async (tenantId, id) => {
-    const occasion = await occasionClient.findOne({ _id: id, tenantId });
+    const query = tenantId ? { _id: id, tenantId } : { _id: id };
+    const occasion = await occasionClient.findOne(query);
 
     if (!occasion) {
         throw new AppError('Occasion not found', 404);
@@ -284,6 +558,9 @@ exports.endOccasion = async (tenantId, id) => {
     occasion.status = 'ended';
     occasion.ends_at = now;
     occasion.updatedat = now;
+    
+    // Cancel any pending BullMQ jobs (start, end, reminder) for this occasion
+    await cancelOccasionJobs(id);
 
     const updatedDoc = await occasion.save();
     emitOccasionUpdated(updatedDoc);
@@ -292,7 +569,8 @@ exports.endOccasion = async (tenantId, id) => {
 };
 
 exports.updateAttendance = async (caller, id, updateData) => {
-    const occasion = await occasionClient.findOne({ _id: id, tenantId: caller.tenantId });
+    const query = caller.tenantId ? { _id: id, tenantId: caller.tenantId } : { _id: id };
+    const occasion = await occasionClient.findOne(query);
     if (!occasion) {
         throw new AppError('Occasion not found', 404);
     }
@@ -307,7 +585,6 @@ exports.updateAttendance = async (caller, id, updateData) => {
         occasion.status = 'started';
     }
 
-    let attendees = Array.isArray(occasion.attendees) ? [...occasion.attendees] : [];
 
     if (Array.isArray(updateData.attendance)) {
         let allowedUserIds = new Set();
@@ -378,7 +655,7 @@ exports.updateAttendance = async (caller, id, updateData) => {
 
                 bulkOps.push({
                     updateOne: {
-                        filter: { tenantId: caller.tenantId, user: attendee.userId, occasion: id },
+                        filter: { tenantId: occasion.tenantId, user: attendee.userId, occasion: id },
                         update: { $set: updateFields },
                         upsert: true
                     }
@@ -387,101 +664,41 @@ exports.updateAttendance = async (caller, id, updateData) => {
 
             await attendanceClient.bulkWrite(bulkOps);
             
-            // Optionally, we could still emit socket events, but emit a single bulk event instead
-            // For now, to keep the contract, we fetch the updated records to emit
             const updatedRecords = await attendanceClient.find({
+                tenantId: occasion.tenantId,
                 occasion: id,
                 user: { $in: scopedAttendance.map(a => a.userId) }
             });
             updatedRecords.forEach(rec => emitAttendanceUpdated(rec));
         }
 
-        const presentUserIds = scopedAttendance
-            .filter(val => val.status === 'present' && val.userId)
-            .map(val => val.userId.toString());
-
-        const nonPresentUserIds = scopedAttendance
-            .filter(val => val.status !== 'present' && val.userId)
-            .map(val => val.userId.toString());
-
-        // Remove non-present users
-        attendees = attendees.filter(a => !nonPresentUserIds.includes(a.toString()));
-
-        const existingUserIds = attendees.map(a => a.toString());
-        for (const userId of presentUserIds) {
-            if (!existingUserIds.includes(userId)) {
-                attendees.push(userId);
-            }
-        }
-        occasion.attendees = attendees;
+        occasion.attendees = _mergeAttendees(occasion.attendees, scopedAttendance);
     }
 
     if (Array.isArray(updateData.events)) {
-        const incomingEvents = updateData.events;
-        const callerId = caller._id.toString();
-
-        const incomingMap = Object.create(null);
-        incomingEvents.forEach(ev => {
-            if (ev._id) incomingMap[ev._id.toString()] = ev;
-        });
-
-        let updatedEvents = occasion.events.map(existingEv => {
-            const existingId = existingEv._id?.toString();
-            if (existingId && incomingMap[existingId]) {
-                const updateEv = incomingMap[existingId];
-
-                if (Array.isArray(updateEv.rating)) {
-                    const selfRatings = updateEv.rating.filter(
-                        r => r.ratingBy?.toString() === callerId
-                    );
-
-                    const ratingMap = Object.create(null);
-                    selfRatings.forEach(r => {
-                        if (r.ratingBy) ratingMap[r.ratingBy.toString()] = r;
-                    });
-
-                    let newRatings = existingEv.rating.map(r => {
-                        const key = r.ratingBy?.toString();
-                        if (key && ratingMap[key]) {
-                            return { ...(r.toObject ? r.toObject() : r), ...ratingMap[key] };
-                        }
-                        return r.toObject ? r.toObject() : r;
-                    });
-
-                    selfRatings.forEach(r => {
-                        if (
-                            r.ratingBy &&
-                            !newRatings.some(nr => nr.ratingBy?.toString() === r.ratingBy.toString())
-                        ) {
-                            newRatings.push(r);
-                        }
-                    });
-
-                    return { ...existingEv.toObject(), rating: newRatings };
-                }
-
-                return existingEv.toObject ? existingEv.toObject() : existingEv;
-            }
-            return existingEv.toObject ? existingEv.toObject() : existingEv;
-        });
-
-        occasion.events = updatedEvents;
+        // Non-admin: restrict rating merge to caller's own ratings only
+        occasion.events = _mergeEventRatings(occasion.events, updateData.events, caller._id.toString());
     }
 
     occasion.updatedat = new Date();
     const updatedDoc = await occasion.save();
+    
+    // Invalidate caches
+    invalidateTenantStats(caller.tenantId);
+
     emitOccasionUpdated(updatedDoc);
 
     return updatedDoc;
 };
 
 exports.deleteOccasion = async (tenantId, id) => {
-    const result = await occasionClient.deleteOne({ _id: id, tenantId });
+    const query = tenantId ? { _id: id, tenantId } : { _id: id };
+    const result = await occasionClient.deleteOne(query);
     if (result.deletedCount === 0) {
         throw new AppError("Occasion not found.", 404);
     }
     
-    await attendanceClient.deleteMany({ occasion: id, tenantId });
+    await attendanceClient.deleteMany(tenantId ? { occasion: id, tenantId } : { occasion: id });
     
     // Cancel any scheduled background jobs
     await cancelOccasionJobs(id);
@@ -490,7 +707,12 @@ exports.deleteOccasion = async (tenantId, id) => {
 };
 
 exports.uploadImage = async (caller, id, fileBuffer) => {
-    const occasion = await occasionClient.findOne({ _id: id, tenantId: caller.tenantId });
+    const query = { _id: id };
+    if (caller.role !== 'rootadmin') {
+        query.tenantId = caller.tenantId;
+    }
+
+    const occasion = await occasionClient.findOne(query);
 
     if (!occasion) {
         throw new AppError('Occasion not found', 404);
@@ -577,28 +799,64 @@ exports.fetchByStatus = async (tenantId, statusRaw) => {
 };
 
 exports.fetchByDate = async (tenantId, date) => {
-    return await occasionClient.find({ tenantId, start_at: { $eq: new Date(date) } });
+    const start = new Date(date);
+    if (isNaN(start.getTime())) return [];
+    start.setHours(0, 0, 0, 0);
+    const end = new Date(start);
+    end.setDate(end.getDate() + 1);
+
+    const query = tenantId 
+        ? { tenantId, start_at: { $gte: start, $lt: end } } 
+        : { start_at: { $gte: start, $lt: end } };
+        
+    return await occasionClient.find(query);
 };
 
-exports.fetchByMonth = async (tenantId, month) => {
-    return await occasionClient.find({ start_at: { $regex: new RegExp(`^${month}`) } });
+exports.fetchByMonth = async (tenantId, monthString) => {
+    const start_at = new Date(monthString);
+    if (isNaN(start_at.getTime())) return [];
+    
+    const start = new Date(start_at.getFullYear(), start_at.getMonth(), 1);
+    const end = new Date(start_at.getFullYear(), start_at.getMonth() + 1, 1);
+    
+    const query = tenantId 
+        ? { tenantId, start_at: { $gte: start, $lt: end } } 
+        : { start_at: { $gte: start, $lt: end } };
+        
+    return await occasionClient.find(query);
 };
 
-exports.fetchByYear = async (tenantId, year) => {
-    return await occasionClient.find({ start_at: { $regex: new RegExp(`^${year}`) } });
+exports.fetchByYear = async (tenantId, yearString) => {
+    const year = parseInt(yearString, 10);
+    if (isNaN(year)) return [];
+    
+    const start = new Date(year, 0, 1);
+    const end = new Date(year + 1, 0, 1);
+    
+    const query = tenantId 
+        ? { tenantId, start_at: { $gte: start, $lt: end } } 
+        : { start_at: { $gte: start, $lt: end } };
+        
+    return await occasionClient.find(query);
 };
 
 exports.fetchGrouped = async (tenantId) => {
-    return await occasionClient.aggregate([
+    const results = await occasionClient.aggregate([
         { $match: { tenantId: new (require("mongoose").Types.ObjectId)(tenantId) } },
         { $unwind: '$events' },
         {
             $group: {
-                _id: '$events.party',
+                _id: { partyName: '$events.party' },
                 count: { $sum: 1 },
                 events: { $push: '$events' }
             }
         },
         { $sort: { count: -1 } }
     ]);
+
+    return results.map(r => ({
+        _id: r._id.partyName,
+        count: r.count,
+        events: r.events
+    }));
 };

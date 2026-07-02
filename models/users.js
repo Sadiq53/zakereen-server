@@ -9,7 +9,7 @@ fullname: { type: String, default: '' },
 createdat: { type: Date, default: Date.now },
 updatedat: { type: Date, default: Date.now },
 userid: { type: String, default: '', index: true },
-userpass: { type: String, default: '' },
+userpass: { type: String, default: '', select: false },
 address: { type: String, default: '' },
 phone: { type: String, default: '' },
 email: { type: String, default: '' },
@@ -29,12 +29,23 @@ profileImage: {
     s3Url: { type: String, default: '' },
     s3Key: { type: String, default: '' },
 },
-fcmTokens: { type: [String], default: [] },
+fcmTokens: { type: [String], default: [], select: false },
+mustChangePassword: { type: Boolean, default: false },
 
 });
 
-// Multi-tenant indexes
-userSchema.index({ tenantId: 1, userid: 1 }, { unique: true, partialFilterExpression: { tenantId: { $ne: null } } });
+// ── toJSON Transform: strip sensitive fields from all serialized output ───────
+userSchema.set('toJSON', {
+    transform: function (_doc, ret) {
+        delete ret.userpass;
+        delete ret.fcmTokens;
+        delete ret.__v;
+        return ret;
+    }
+});
+
+// Global unique index on userid across all tenants
+userSchema.index({ userid: 1 }, { unique: true });
 userSchema.index({ tenantId: 1, belongsto: 1, role: 1 });
 userSchema.index({ tenantId: 1, role: 1 });
 const cacheBuster = require('../utils/cacheBuster');

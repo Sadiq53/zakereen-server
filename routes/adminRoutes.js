@@ -19,6 +19,7 @@ router.use(resolveTenant);
 router.use(requireRootAdmin);
 
 // Tenant CRUD
+router.get('/tenants/search', tenantController.searchTenants);
 router.post('/tenants', validateRequest({ body: createTenantSchema }), auditAction('tenant.create', 'Tenant'), tenantController.createTenant);
 router.get('/tenants', tenantController.listTenants);
 router.get('/tenants/:id', tenantController.getTenant);

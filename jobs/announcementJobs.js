@@ -1,6 +1,7 @@
 const AnnouncementGroup = require('../models/announcementGroup');
 const User = require('../models/users');
 const { sendMulticastNotification, buildDataPayload } = require('../utils/fcmUtils');
+const mongoose = require('mongoose');
 
 /**
  * Sends push notifications for new announcement messages.
@@ -24,8 +25,9 @@ async function processAnnouncementNotification(job) {
         }
 
         // Build the user query based on group type
+        const senderObjectId = new mongoose.Types.ObjectId(senderId);
         let query = {
-            _id: { $ne: senderId },
+            _id: { $ne: senderObjectId },
             fcmTokens: { $exists: true, $ne: [] }
         };
 
@@ -34,7 +36,7 @@ async function processAnnouncementNotification(job) {
             query.tenantId = group.tenantId;
         } else if (group.type === 'custom' && group.members && group.members.length > 0) {
             // Only explicit group members
-            query._id = { $ne: senderId, $in: group.members };
+            query._id = { $ne: senderObjectId, $in: group.members };
         }
         // For 'global_jamiat', we don't restrict by tenant — all users get notified
 
@@ -51,15 +53,15 @@ async function processAnnouncementNotification(job) {
         }
 
         // Construct notification content (WhatsApp-style preview)
-        const title = `📢 ${groupName}`;
+        const title = groupName;
         let body = '';
         if (content && content.trim().length > 0) {
             body = `${senderName}: ${content.substring(0, 200)}`;
         } else if (pollQuestion) {
-            body = `${senderName}: 📊 Poll — ${pollQuestion.substring(0, 150)}`;
+            body = `${senderName}: Poll — ${pollQuestion.substring(0, 150)}`;
         } else if (mediaType) {
-            const mediaLabels = { image: '📷 Photo', video: '🎥 Video', pdf: '📄 PDF', document: '📎 Document' };
-            body = `${senderName}: ${mediaLabels[mediaType] || '📎 Attachment'}`;
+            const mediaLabels = { image: 'Photo', video: 'Video', pdf: 'PDF', document: 'Document' };
+            body = `${senderName}: ${mediaLabels[mediaType] || 'Attachment'}`;
         } else {
             body = `${senderName} sent a message`;
         }

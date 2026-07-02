@@ -10,5 +10,6 @@ routes.use('/api/v1/saved-locations', require('../routes/savedLocationRoute'));
 routes.use('/api/v1/vocal-sessions', require('../routes/vocalSessionRoutes'));
 routes.use('/api/v1/announcements', require('../routes/announcementRoutes'));
 routes.use('/api/v1/kalam', require('../routes/kalamRoutes'));
+routes.use('/api/v1/tenants', require('../routes/tenantRoutes'));
 
 module.exports = routes;

@@ -1,3 +1,9 @@
+// ── Boot-time validation (must be first) ─────────────────────────────────────
+require('dotenv').config();
+// const validateEnv = require('./config/validateEnv');
+// validateEnv();
+// ──────────────────────────────────────────────────────────────────────────────
+
 const express = require('express')
 const app = express();
 const path = require('path')
@@ -6,25 +12,36 @@ const helmet = require('helmet')
 const compression = require('compression')
 const rateLimit = require('express-rate-limit')
 const routes = require('./config/allRoutes')
-const userClient = require('./models/users')
 
 const { initializeSocket } = require("./config/socket");
 const { seedRootAdmin } = require("./config/seedAdmin");
-const { verifyToken } = require('./middlewares/auth');
+
 
 // Trust proxy (required when behind ngrok, nginx, or any reverse proxy)
 app.set('trust proxy', 1);
 
+// Disable ETags to prevent React Native 304 empty body bug
+app.set('etag', false);
+
 // Rate limiting configuration
 const limiter = rateLimit({
-    windowMs: 15 * 60 * 1000, // 15 minutes
-    max: 100, // Limit each IP to 100 requests per `window` (here, per 15 minutes)
-    standardHeaders: true, // Return rate limit info in the `RateLimit-*` headers
-    legacyHeaders: false, // Disable the `X-RateLimit-*` headers
-    message: 'Too many requests from this IP, please try again after 15 minutes'
+    windowMs: 5 * 60 * 1000, // 5 minutes
+    max: 300, // Limit each IP to 300 requests per 5 minutes globally
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: 'Too many requests from this IP, please try again after 5 minutes'
 });
 
-// Apply rate limiting to all requests
+const loginLimiter = rateLimit({
+    windowMs: 5 * 60 * 1000, // 5 minutes
+    max: 10, // Limit each IP to 10 login requests per 5 minutes
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: 'Too many login attempts from this IP, please try again after 5 minutes'
+});
+
+// Apply rate limiting
+app.use('/api/v1/auth/login', loginLimiter);
 app.use(limiter);
 
 // Security Headers
@@ -36,16 +53,15 @@ app.use(compression());
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'assets')))
 app.use(express.urlencoded({ extended : true }))
+const allowedOrigins = process.env.ALLOWED_ORIGINS
+    ? process.env.ALLOWED_ORIGINS.split(',')
+    : ['http://localhost:3000', 'http://localhost:3001'];
 app.use(cors({
-    origin: '*', // Allow all origins
-    methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH'], // Allow required methods
-    allowedHeaders: ['Content-Type', 'Authorization'] // Allow required headers
+    origin: allowedOrigins,
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'X-Tenant-Id'],
+    credentials: true
 }));
-
-app.get("/all", verifyToken, async (req, res) => {
-    const user = await userClient.find()
-    res.status(200).json(user)
-})
 
 app.use(routes)
 

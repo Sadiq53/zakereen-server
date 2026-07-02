@@ -9,8 +9,9 @@ exports.getAllGroups = async (tenantId) => {
     return await groupClient.find(query);
 };
 
-exports.getGroupById = async (groupId) => {
-    const group = await groupClient.findById(groupId);
+exports.getGroupById = async (tenantId, groupId) => {
+    const query = tenantId ? { _id: groupId, tenantId } : { _id: groupId };
+    const group = await groupClient.findOne(query);
     if (!group) {
         throw new AppError('Group not found.', 404);
     }
@@ -87,8 +88,9 @@ exports.createGroup = async (tenantId, name, adminId, userDetails) => {
     };
 };
 
-exports.updateGroup = async (caller, groupId, name) => {
-    const group = await groupClient.findById(groupId);
+exports.updateGroup = async (tenantId, caller, groupId, name) => {
+    const query = tenantId ? { _id: groupId, tenantId } : { _id: groupId };
+    const group = await groupClient.findOne(query);
     if (!group) {
         throw new AppError('Group not found.', 404);
     }
@@ -105,8 +107,9 @@ exports.updateGroup = async (caller, groupId, name) => {
     return group;
 };
 
-exports.deleteGroup = async (groupId) => {
-    const group = await groupClient.findByIdAndDelete(groupId);
+exports.deleteGroup = async (tenantId, groupId) => {
+    const query = tenantId ? { _id: groupId, tenantId } : { _id: groupId };
+    const group = await groupClient.findOneAndDelete(query);
     if (!group) {
         throw new AppError('Group not found.', 404);
     }
@@ -119,16 +122,18 @@ exports.deleteGroup = async (groupId) => {
         }
     }
 
+    const userUpdateQuery = tenantId ? { belongsto: group.name, tenantId } : { belongsto: group.name };
     await userClient.updateMany(
-        { belongsto: group.name },
+        userUpdateQuery,
         { $set: { belongsto: '' } }
     );
     
     emitGroupDeleted(group.tenantId, groupId);
 };
 
-exports.transferRole = async (caller, groupId, newAdminId) => {
-    const group = await groupClient.findById(groupId);
+exports.transferRole = async (tenantId, caller, groupId, newAdminId) => {
+    const query = tenantId ? { _id: groupId, tenantId } : { _id: groupId };
+    const group = await groupClient.findOne(query);
     if (!group) {
         throw new AppError('Group not found.', 404);
     }
@@ -165,8 +170,9 @@ exports.transferRole = async (caller, groupId, newAdminId) => {
     return group;
 };
 
-exports.addMember = async (caller, groupId, userId) => {
-    const group = await groupClient.findById(groupId);
+exports.addMember = async (tenantId, caller, groupId, userId) => {
+    const query = tenantId ? { _id: groupId, tenantId } : { _id: groupId };
+    const group = await groupClient.findOne(query);
     if (!group) {
         throw new AppError('Group not found.', 404);
     }
@@ -179,7 +185,8 @@ exports.addMember = async (caller, groupId, userId) => {
         throw new AppError('User is already a member of this group.', 400);
     }
 
-    const user = await userClient.findById(userId);
+    const userQuery = tenantId ? { _id: userId, tenantId } : { _id: userId };
+    const user = await userClient.findOne(userQuery);
     if (!user) {
         throw new AppError('User not found.', 400);
     }
@@ -199,17 +206,18 @@ exports.addMember = async (caller, groupId, userId) => {
     return group;
 };
 
-exports.transferMember = async (caller, groupId, userId, newGroupId) => {
+exports.transferMember = async (tenantId, caller, groupId, userId, newGroupId) => {
     if (caller.role === 'groupadmin') {
-        const sourceGroup = await groupClient.findById(groupId);
+        const sourceQuery = tenantId ? { _id: groupId, tenantId } : { _id: groupId };
+        const sourceGroup = await groupClient.findOne(sourceQuery);
         if (!sourceGroup || sourceGroup.admin.toString() !== caller._id.toString()) {
             throw new AppError('You can only transfer members from your own group.', 403);
         }
     }
 
-    const group = await groupClient.findById(groupId);
-    const newGroup = await groupClient.findById(newGroupId);
-    const user = await userClient.findById(userId);
+    const group = await groupClient.findOne(tenantId ? { _id: groupId, tenantId } : { _id: groupId });
+    const newGroup = await groupClient.findOne(tenantId ? { _id: newGroupId, tenantId } : { _id: newGroupId });
+    const user = await userClient.findOne(tenantId ? { _id: userId, tenantId } : { _id: userId });
 
     if (!group || !newGroup) {
         throw new AppError('Group not found.', 404);
@@ -234,8 +242,9 @@ exports.transferMember = async (caller, groupId, userId, newGroupId) => {
     return newGroup;
 };
 
-exports.removeMember = async (caller, groupId, userId) => {
-    const group = await groupClient.findById(groupId);
+exports.removeMember = async (tenantId, caller, groupId, userId) => {
+    const query = tenantId ? { _id: groupId, tenantId } : { _id: groupId };
+    const group = await groupClient.findOne(query);
     if (!group) {
         throw new AppError('Group not found.', 404);
     }
@@ -244,7 +253,8 @@ exports.removeMember = async (caller, groupId, userId) => {
         throw new AppError('You can only remove members from your own group.', 403);
     }
 
-    const user = await userClient.findById(userId);
+    const userQuery = tenantId ? { _id: userId, tenantId } : { _id: userId };
+    const user = await userClient.findOne(userQuery);
     if (!user || !group.members.includes(userId)) {
         throw new AppError('User is not a member of this group.', 400);
     }
@@ -258,7 +268,7 @@ exports.removeMember = async (caller, groupId, userId) => {
     emitUserUpdated(user);
 };
 
-exports.leaveGroup = async (caller, userId) => {
+exports.leaveGroup = async (tenantId, caller, userId) => {
     if (caller._id.toString() !== userId) {
         throw new AppError('You can only leave a group for yourself.', 403);
     }
@@ -267,7 +277,8 @@ exports.leaveGroup = async (caller, userId) => {
         throw new AppError('You are not in any group.', 400);
     }
 
-    const group = await groupClient.findOne({ name: caller.belongsto });
+    const query = tenantId ? { name: caller.belongsto, tenantId } : { name: caller.belongsto };
+    const group = await groupClient.findOne(query);
     if (!group) {
         throw new AppError('Group not found.', 404);
     }

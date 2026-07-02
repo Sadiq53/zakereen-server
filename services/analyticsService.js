@@ -140,7 +140,7 @@ exports.getKalamAnalytics = async (tenantId) => {
             $group: {
                 _id: { type: "$events.type", name: "$events.name" },
                 count: { $sum: 1 },
-                parties: { $addToSet: "$events.party" }
+                partyNames: { $addToSet: "$events.party" }
             }
         },
         {
@@ -149,14 +149,14 @@ exports.getKalamAnalytics = async (tenantId) => {
                 type: "$_id.type",
                 name: "$_id.name",
                 count: 1,
-                parties: 1
+                parties: "$partyNames"
             }
         }
     ];
 
     const exactKalams = await Occasions.aggregate(pipeline);
 
-    const SIMILARITY_THRESHOLD = 0.80;
+    const SIMILARITY_THRESHOLD = 0.60;
     const clusters = [];
 
     for (const item of exactKalams) {
@@ -176,13 +176,13 @@ exports.getKalamAnalytics = async (tenantId) => {
 
         if (matchedCluster) {
             matchedCluster.count += item.count;
-            matchedCluster.parties = [...new Set([...matchedCluster.parties, ...item.parties])];
+            matchedCluster.parties = [...new Set([...matchedCluster.parties, ...(item.parties || [])])];
         } else {
             clusters.push({
                 type: item.type,
                 canonicalName: item.name,
                 count: item.count,
-                parties: [...item.parties]
+                parties: item.parties ? [...item.parties] : []
             });
         }
     }
@@ -209,7 +209,7 @@ exports.getPartyAnalytics = async (tenantId) => {
         { $match: { "events.party": { $ne: null, $ne: "" } } },
         {
             $group: {
-                _id: "$events.party",
+                _id: { partyName: "$events.party" },
                 totalTurns: { $sum: 1 },
                 kalamsRecited: { $addToSet: "$events.name" },
                 types: { $push: "$events.type" },
@@ -220,7 +220,7 @@ exports.getPartyAnalytics = async (tenantId) => {
         {
             $project: {
                 _id: 0,
-                partyId: "$_id",
+                partyId: "$_id.partyName",
                 totalTurns: 1,
                 totalOccasionsParticipated: { $size: "$occasionsParticipated" },
                 participationPercentage: {
@@ -306,8 +306,19 @@ exports.getOverviewAnalytics = async (tenantId) => {
 };
 
 exports.getUserAnalytics = async (tenantId, userid) => {
-    const targetUser = await User.findOne({ _id: userid, tenantId });
+    const isObjectId = mongoose.Types.ObjectId.isValid(userid);
+    
+    const query = {
+        $or: isObjectId ? [{ _id: userid }, { userid: String(userid) }] : [{ userid: String(userid) }]
+    };
+    if (tenantId) query.tenantId = tenantId;
+
+    const targetUser = await User.findOne(query);
+    
     if (!targetUser) throw new AppError("User not found", 404);
+    
+    // Fallback: If accessed globally by rootadmin, use the user's native tenantId
+    tenantId = tenantId || targetUser.tenantId;
 
     const attendanceStats = await Attendance.aggregate([
         { $match: { user: targetUser._id } },

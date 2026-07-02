@@ -8,6 +8,7 @@ const kalamSchema = new mongoose.Schema({
     updatedat: { type: Date, default: Date.now }
 }, { collection: "kalams" });
 
+kalamSchema.index({ name: 1, type: 1 });
 const cacheBuster = require('../utils/cacheBuster');
 kalamSchema.plugin(cacheBuster);
 

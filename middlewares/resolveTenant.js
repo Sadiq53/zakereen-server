@@ -21,7 +21,7 @@ const resolveTenant = async (req, res, next) => {
     // Root admin operates globally
     if (user.role === 'rootadmin') {
         // Root admin can optionally target a specific tenant via header or query
-        const targetTenantId = req.headers['x-tenant-id'] || req.query.tenantId || user.tenantId || null;
+        let targetTenantId = req.headers['x-tenant-id'] || req.query.tenantId || null;
 
         if (targetTenantId) {
             const tenant = await Tenant.findById(targetTenantId).lean();
@@ -31,6 +31,7 @@ const resolveTenant = async (req, res, next) => {
         }
 
         req.tenantId = targetTenantId;
+        req.userTenantId = user.tenantId || null;
         req.isRootAdmin = true;
         return next();
     }

@@ -1,5 +1,5 @@
 const { Queue } = require('bullmq');
-const redisClient = require('../utils/redisClient');
+const { bullClient: redisClient } = require('../config/redis');
 
 const occasionQueue = new Queue('occasion-events', {
     connection: redisClient,

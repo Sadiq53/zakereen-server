@@ -11,7 +11,7 @@ exports.getAllGroups = asyncHandler(async (req, res) => {
 // GET /:groupId
 exports.getGroupById = asyncHandler(async (req, res) => {
     const { groupId } = req.params;
-    const group = await groupService.getGroupById(groupId);
+    const group = await groupService.getGroupById(req.tenantId, groupId);
     res.status(200).json(group);
 });
 
@@ -20,8 +20,8 @@ exports.createGroup = asyncHandler(async (req, res) => {
     const { name, adminId, userDetails, tenantId } = req.body;
     
     let targetTenantId = req.tenantId;
-    if (req.isRootAdmin && tenantId) {
-        targetTenantId = tenantId;
+    if (req.isRootAdmin) {
+        targetTenantId = tenantId || req.tenantId || req.userTenantId;
     }
 
     if (!targetTenantId) {
@@ -36,14 +36,14 @@ exports.createGroup = asyncHandler(async (req, res) => {
 exports.updateGroup = asyncHandler(async (req, res) => {
     const { groupId } = req.params;
     const { name } = req.body;
-    const group = await groupService.updateGroup(req.user, groupId, name);
+    const group = await groupService.updateGroup(req.tenantId, req.user, groupId, name);
     res.status(200).json(group);
 });
 
 // DELETE /remove/:groupId
 exports.deleteGroup = asyncHandler(async (req, res) => {
     const { groupId } = req.params;
-    await groupService.deleteGroup(groupId);
+    await groupService.deleteGroup(req.tenantId, groupId);
     res.status(204).send();
 });
 
@@ -51,7 +51,7 @@ exports.deleteGroup = asyncHandler(async (req, res) => {
 exports.transferRole = asyncHandler(async (req, res) => {
     const { groupId } = req.params;
     const { newAdminId } = req.body;
-    const group = await groupService.transferRole(req.user, groupId, newAdminId);
+    const group = await groupService.transferRole(req.tenantId, req.user, groupId, newAdminId);
     res.status(200).json(group);
 });
 
@@ -59,7 +59,7 @@ exports.transferRole = asyncHandler(async (req, res) => {
 exports.addMember = asyncHandler(async (req, res) => {
     const { groupId } = req.params;
     const { userId } = req.body;
-    const group = await groupService.addMember(req.user, groupId, userId);
+    const group = await groupService.addMember(req.tenantId, req.user, groupId, userId);
     res.status(200).json(group);
 });
 
@@ -67,7 +67,7 @@ exports.addMember = asyncHandler(async (req, res) => {
 exports.transferMember = asyncHandler(async (req, res) => {
     const { groupId } = req.params;
     const { userId, newGroupId } = req.body;
-    const newGroup = await groupService.transferMember(req.user, groupId, userId, newGroupId);
+    const newGroup = await groupService.transferMember(req.tenantId, req.user, groupId, userId, newGroupId);
     res.status(200).json(newGroup);
 });
 
@@ -75,13 +75,13 @@ exports.transferMember = asyncHandler(async (req, res) => {
 exports.removeMember = asyncHandler(async (req, res) => {
     const { groupId } = req.params;
     const { userId } = req.body;
-    await groupService.removeMember(req.user, groupId, userId);
+    await groupService.removeMember(req.tenantId, req.user, groupId, userId);
     res.status(204).send();
 });
 
 // PUT /leave/:userId
 exports.leaveGroup = asyncHandler(async (req, res) => {
     const { userId } = req.params;
-    await groupService.leaveGroup(req.user, userId);
+    await groupService.leaveGroup(req.tenantId, req.user, userId);
     res.status(200).json({ message: 'Successfully left the group.' });
 });

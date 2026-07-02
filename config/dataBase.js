@@ -9,11 +9,7 @@ const {
 } = process.env;
 
 mongoose.connect(
-    `mongodb+srv://${MONGODB_USERNAME}:${MONGODB_PASSWORD}@${MONGODB_CLUSTER}/${MONGODB_DATABASE}`,
-    {
-        useNewUrlParser: true,
-        useUnifiedTopology: true,
-    }
+    `mongodb+srv://${MONGODB_USERNAME}:${MONGODB_PASSWORD}@${MONGODB_CLUSTER}/${MONGODB_DATABASE}`
 );
 
 mongoose.connection.on("connected", () => {

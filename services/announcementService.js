@@ -2,6 +2,7 @@ const AnnouncementGroup = require('../models/announcementGroup');
 const AnnouncementMessage = require('../models/announcementMessage');
 const { emitNewAnnouncement, emitAnnouncementReaction } = require('../utils/socketEmit');
 const mongoose = require('mongoose');
+const AppError = require('../utils/AppError');
 
 class AnnouncementService {
     
@@ -35,14 +36,16 @@ class AnnouncementService {
      */
     async getGroupMessages(groupId, user, page = 1, limit = 50) {
         const group = await AnnouncementGroup.findById(groupId);
-        if (!group) throw new Error("Group not found");
+        if (!group) throw new AppError('Group not found', 404);
 
         // Permission check
-        if (group.type === 'tenant_jamaat' && group.tenantId.toString() !== user.tenantId.toString()) {
-            throw new Error("Unauthorized access to this Jamaat group");
+        if (group.type === 'tenant_jamaat') {
+            if (!group.tenantId || group.tenantId.toString() !== user.tenantId?.toString()) {
+                throw new AppError('Unauthorized access to this Jamaat group', 403);
+            }
         }
         if (group.type === 'custom' && !group.members.includes(user._id)) {
-            throw new Error("You are not a member of this custom group");
+            throw new AppError('You are not a member of this custom group', 403);
         }
 
         const skip = (page - 1) * limit;
@@ -77,10 +80,10 @@ class AnnouncementService {
      */
     async postMessage(groupId, user, content, media = [], poll = null) {
         const group = await AnnouncementGroup.findById(groupId);
-        if (!group) throw new Error("Group not found");
+        if (!group) throw new AppError('Group not found', 404);
 
         if (!this.canSendMessage(group, user)) {
-            throw new Error("You do not have permission to send messages in this group");
+            throw new AppError('You do not have permission to send messages in this group', 403);
         }
 
         const newMessage = new AnnouncementMessage({
@@ -109,7 +112,7 @@ class AnnouncementService {
      */
     async toggleReaction(groupId, messageId, user, emoji) {
         const message = await AnnouncementMessage.findById(messageId);
-        if (!message) throw new Error("Message not found");
+        if (!message) throw new AppError('Message not found', 404);
 
         // 1. Check if the user already reacted with this exact emoji
         const existingReactionIndex = message.reactions.findIndex(r => r.emoji === emoji);
@@ -158,8 +161,8 @@ class AnnouncementService {
      */
     async votePoll(groupId, messageId, user, optionIds) {
         const message = await AnnouncementMessage.findById(messageId);
-        if (!message) throw new Error("Message not found");
-        if (!message.poll) throw new Error("This message does not contain a poll");
+        if (!message) throw new AppError('Message not found', 404);
+        if (!message.poll) throw new AppError('This message does not contain a poll', 400);
 
         const poll = message.poll;
         const userId = user._id.toString();
@@ -215,7 +218,7 @@ class AnnouncementService {
      */
     async createCustomGroup(user, name, description, members = []) {
         if (!['rootadmin', 'superadmin'].includes(user.role)) {
-            throw new Error("Only super/root admins can create announcement groups");
+            throw new AppError('Only super/root admins can create announcement groups', 403);
         }
 
         // Always include creator in members and admins
@@ -253,7 +256,7 @@ class AnnouncementService {
             .populate('pinnedMessage.pinnedBy', 'fullname profileImage')
             .lean();
 
-        if (!group) throw new Error("Group not found");
+        if (!group) throw new AppError('Group not found', 404);
 
         // For global/tenant groups, members are resolved dynamically
         let resolvedMembers = group.members || [];
@@ -274,11 +277,11 @@ class AnnouncementService {
      */
     async updateGroupSettings(groupId, user, updates) {
         if (!['rootadmin', 'superadmin'].includes(user.role)) {
-            throw new Error("Only super/root admins can update group settings");
+            throw new AppError('Only super/root admins can update group settings', 403);
         }
 
         const group = await AnnouncementGroup.findById(groupId);
-        if (!group) throw new Error("Group not found");
+        if (!group) throw new AppError('Group not found', 404);
 
         if (updates.name !== undefined) {
             group.name = updates.name.trim();
@@ -308,12 +311,12 @@ class AnnouncementService {
      */
     async editMessage(groupId, messageId, user, newContent) {
         const message = await AnnouncementMessage.findById(messageId);
-        if (!message) throw new Error("Message not found");
-        if (message.groupId.toString() !== groupId) throw new Error("Message does not belong to this group");
+        if (!message) throw new AppError('Message not found', 404);
+        if (message.groupId.toString() !== groupId) throw new AppError('Message does not belong to this group', 400);
         if (message.senderId.toString() !== user._id.toString()) {
-            throw new Error("You can only edit your own messages");
+            throw new AppError('You can only edit your own messages', 403);
         }
-        if (message.isDeleted) throw new Error("Cannot edit a deleted message");
+        if (message.isDeleted) throw new AppError('Cannot edit a deleted message', 400);
 
         message.content = newContent.trim();
         message.isEdited = true;
@@ -331,14 +334,14 @@ class AnnouncementService {
      */
     async deleteMessageForEveryone(groupId, messageId, user) {
         const message = await AnnouncementMessage.findById(messageId);
-        if (!message) throw new Error("Message not found");
-        if (message.groupId.toString() !== groupId) throw new Error("Message does not belong to this group");
+        if (!message) throw new AppError('Message not found', 404);
+        if (message.groupId.toString() !== groupId) throw new AppError('Message does not belong to this group', 400);
 
         const isSender = message.senderId.toString() === user._id.toString();
         const isAdmin = ['rootadmin', 'superadmin'].includes(user.role);
 
         if (!isSender && !isAdmin) {
-            throw new Error("You can only delete your own messages");
+            throw new AppError('You can only delete your own messages', 403);
         }
 
         message.isDeleted = true;
@@ -356,8 +359,8 @@ class AnnouncementService {
      */
     async deleteMessageForMe(groupId, messageId, user) {
         const message = await AnnouncementMessage.findById(messageId);
-        if (!message) throw new Error("Message not found");
-        if (message.groupId.toString() !== groupId) throw new Error("Message does not belong to this group");
+        if (!message) throw new AppError('Message not found', 404);
+        if (message.groupId.toString() !== groupId) throw new AppError('Message does not belong to this group', 400);
 
         // Use $addToSet to prevent duplicates
         await AnnouncementMessage.updateOne(
@@ -374,7 +377,7 @@ class AnnouncementService {
      */
     async getGroupMedia(groupId, user, type = 'images', page = 1, limit = 30) {
         const group = await AnnouncementGroup.findById(groupId);
-        if (!group) throw new Error("Group not found");
+        if (!group) throw new AppError('Group not found', 404);
 
         const skip = (page - 1) * limit;
 
@@ -447,19 +450,19 @@ class AnnouncementService {
      */
     async pinMessage(groupId, messageId, user, durationHours = null) {
         const group = await AnnouncementGroup.findById(groupId);
-        if (!group) throw new Error("Group not found");
+        if (!group) throw new AppError('Group not found', 404);
 
         if (!this.canSendMessage(group, user)) {
-            throw new Error("You do not have permission to pin messages in this group");
+            throw new AppError('You do not have permission to pin messages in this group', 403);
         }
 
         const message = await AnnouncementMessage.findById(messageId)
             .populate('senderId', 'fullname profileImage')
             .lean();
             
-        if (!message) throw new Error("Message not found");
-        if (message.groupId.toString() !== groupId) throw new Error("Message does not belong to this group");
-        if (message.isDeleted) throw new Error("Cannot pin a deleted message");
+        if (!message) throw new AppError('Message not found', 404);
+        if (message.groupId.toString() !== groupId) throw new AppError('Message does not belong to this group', 400);
+        if (message.isDeleted) throw new AppError('Cannot pin a deleted message', 400);
 
         let expiresAt = null;
         if (durationHours) {
@@ -493,10 +496,10 @@ class AnnouncementService {
      */
     async unpinMessage(groupId, user) {
         const group = await AnnouncementGroup.findById(groupId);
-        if (!group) throw new Error("Group not found");
+        if (!group) throw new AppError('Group not found', 404);
 
         if (!this.canSendMessage(group, user)) {
-            throw new Error("You do not have permission to unpin messages in this group");
+            throw new AppError('You do not have permission to unpin messages in this group', 403);
         }
 
         group.pinnedMessage = null;

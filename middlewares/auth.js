@@ -132,7 +132,8 @@ const verifyToken = async (req, res, next) => {
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
     const userid = String(decoded.userid);
 
-    const user = await userClient.findOne({ userid });
+    const user = await userClient.findOne({ userid })
+      .select('-attendence');
 
     if (!user) {
       return res.status(401).json({ error: "User not found." });

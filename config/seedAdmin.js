@@ -13,6 +13,7 @@ const ROOT_ADMIN = {
   belongsto: '',
   grade: 'A',
   attendence: [],
+  mustChangePassword: true,
   profileImage: {
     s3Url: '',
     s3Key: '',

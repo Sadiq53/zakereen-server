@@ -18,6 +18,9 @@ router.get('/me', verifyToken, resolveTenant, userController.getMe);
 // GET / — List all users (any authenticated user can view all users)
 router.get('/', verifyToken, resolveTenant, userController.getAllUsers);
 
+// GET /fetch/paginated — Paginated, filterable user list
+router.get('/fetch/paginated', verifyToken, resolveTenant, userController.fetchPaginated);
+
 // PUT /update/:id/title — Update a user's title
 router.put('/update/:id/title', authGroup, resolveTenant, validateRequest({ body: updateUserTitleSchema }), userController.updateUserTitle);
 
@@ -39,6 +42,9 @@ router.post('/authentication/login', validateRequest({ body: loginSchema }), use
 // POST /create — Create a new user
 router.post('/create', authGroup, resolveTenant, validateRequest({ body: createUserSchema }), userController.createUser);
 
+// POST /bulk-insert — Bulk insert users
+router.post('/bulk-insert', authGroup, resolveTenant, userController.bulkInsertUsers);
+
 // PATCH /update/:userid — Update a user
 router.patch('/update/:userid', verifyToken, resolveTenant, validateRequest({ body: updateUserSchema }), userController.updateUser);
 
@@ -47,5 +53,11 @@ router.put('/fcm-token', verifyToken, resolveTenant, validateRequest({ body: add
 
 // DELETE /fcm-token — Remove a device token (e.g., on logout)
 router.delete('/fcm-token', verifyToken, resolveTenant, validateRequest({ body: addFcmTokenSchema }), userController.removeFcmToken);
+
+// POST /:userid/transfer-party — Transfer a user to a different party
+router.post('/:userid/transfer-party', authGroup, resolveTenant, userController.transferParty);
+
+// POST /:userid/transfer-jamaat — Transfer a user to a different Jamaat (Super/Root Admin only)
+router.post('/:userid/transfer-jamaat', authGroup, resolveTenant, userController.transferJamaat);
 
 module.exports = router;

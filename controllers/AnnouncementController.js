@@ -89,15 +89,8 @@ const toggleReaction = expressAsyncHandler(async (req, res) => {
 
     const reactions = await announcementService.toggleReaction(groupId, messageId, req.user, emoji);
     
-    // Dispatch push notification
-    const group = await require('../models/announcementGroup').findById(groupId, 'name').lean();
-    announcementQueue.add('push-notification', {
-        groupId,
-        groupName: group?.name || 'Announcement',
-        senderId: req.user._id.toString(),
-        senderName: req.user.fullname || 'Admin',
-        content: `reacted ${emoji} to a message`
-    }).catch(err => console.error('[Announcement] Failed to enqueue push job:', err));
+    // NOTE: Push notifications for reactions have been explicitly removed to 
+    // prevent notification fatigue in large groups (aligns with WhatsApp/Telegram behavior).
 
     res.status(200).json({ success: true, reactions });
 });
@@ -112,15 +105,8 @@ const votePoll = expressAsyncHandler(async (req, res) => {
 
     const poll = await announcementService.votePoll(groupId, messageId, req.user, optionIds);
 
-    // Dispatch push notification
-    const group = await require('../models/announcementGroup').findById(groupId, 'name').lean();
-    announcementQueue.add('push-notification', {
-        groupId,
-        groupName: group?.name || 'Announcement',
-        senderId: req.user._id.toString(),
-        senderName: req.user.fullname || 'Admin',
-        content: `voted in a poll`
-    }).catch(err => console.error('[Announcement] Failed to enqueue push job:', err));
+    // NOTE: Push notifications for poll votes have been explicitly removed to 
+    // prevent notification fatigue in large groups (aligns with WhatsApp/Telegram behavior).
 
     res.status(200).json({ success: true, poll });
 });

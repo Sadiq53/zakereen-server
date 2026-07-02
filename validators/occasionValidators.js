@@ -21,6 +21,9 @@ exports.createOccasionSchema = z.object({
         type: z.enum(allowedTypes, { errorMap: () => ({ message: `Invalid event type. Allowed: ${allowedTypes.join(', ')}` }) }),
         party: z.string().optional().nullable()
     })).optional().default([]),
+    attendance: z.array(z.any()).optional().default([]),
+    tenantId: z.string().optional().nullable(),
+    duration: z.number().min(30, 'Duration must be at least 30 minutes').max(480, 'Duration cannot exceed 8 hours').optional()
 });
 
 exports.updateOccasionSchema = z.object({

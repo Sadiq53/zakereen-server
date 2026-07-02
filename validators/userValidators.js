@@ -15,6 +15,7 @@ exports.createUserSchema = z.object({
     belongsto: z.string().optional(),
     grade: z.string().optional(),
     address: z.string().optional(),
+    tenantId: z.string().optional(),
     email: z.string().email('Invalid email address').optional().or(z.literal('')),
 });
 

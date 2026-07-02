@@ -1,5 +1,6 @@
 const asyncHandler = require('express-async-handler');
 const tenantService = require('../services/tenantService');
+const Tenant = require('../models/tenant');
 
 exports.createTenant = asyncHandler(async (req, res) => {
     const tenant = await tenantService.createTenant(req.body);
@@ -14,6 +15,17 @@ exports.assignCoordinator = asyncHandler(async (req, res) => {
 exports.listTenants = asyncHandler(async (req, res) => {
     const tenants = await tenantService.listTenants(req.query.status);
     res.status(200).json({ success: true, data: tenants });
+});
+
+exports.searchTenants = asyncHandler(async (req, res) => {
+    const { q } = req.query;
+    if (!q) return res.status(200).json({ tenants: [] });
+    
+    const tenants = await Tenant.find({ name: { $regex: q, $options: 'i' } })
+        .select('_id name')
+        .limit(20)
+        .lean();
+    res.status(200).json({ tenants });
 });
 
 exports.getTenant = asyncHandler(async (req, res) => {

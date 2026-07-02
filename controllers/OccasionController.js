@@ -3,7 +3,15 @@ const asyncHandler = require('express-async-handler');
 
 // POST /create
 exports.createOccasion = asyncHandler(async (req, res) => {
-    const newOccasion = await occasionService.createOccasion(req.tenantId, req.body);
+    let targetTenantId = req.isRootAdmin ? (req.body.tenantId || req.tenantId || req.userTenantId) : req.tenantId;
+    const newOccasion = await occasionService.createOccasion(targetTenantId, req.body);
+    res.status(201).json(newOccasion);
+});
+
+// POST /create-past
+exports.createPastOccasion = asyncHandler(async (req, res) => {
+    let targetTenantId = req.isRootAdmin ? (req.body.tenantId || req.tenantId || req.userTenantId) : req.tenantId;
+    const newOccasion = await occasionService.createPastOccasion(targetTenantId, req.body, req.user);
     res.status(201).json(newOccasion);
 });
 
@@ -17,7 +25,8 @@ exports.updateOccasion = asyncHandler(async (req, res) => {
 // PATCH /end/:id
 exports.endOccasion = asyncHandler(async (req, res) => {
     const { id } = req.params;
-    const updatedDoc = await occasionService.endOccasion(req.tenantId, id);
+    const targetTenantId = req.isRootAdmin ? null : req.tenantId;
+    const updatedDoc = await occasionService.endOccasion(targetTenantId, id);
     res.status(200).json({ success: true, data: updatedDoc });
 });
 

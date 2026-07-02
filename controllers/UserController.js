@@ -13,6 +13,23 @@ exports.getAllUsers = asyncHandler(async (req, res) => {
     res.status(200).json(users);
 });
 
+// GET /fetch/paginated
+exports.fetchPaginated = asyncHandler(async (req, res) => {
+    const { page, limit, search, jamaat, role, sort, party } = req.query;
+    
+    const result = await userService.fetchPaginatedUsers(req.tenantId, {
+        page: parseInt(page, 10) || 1,
+        limit: parseInt(limit, 10) || 20,
+        search,
+        jamaat,
+        role,
+        sort,
+        party
+    });
+
+    res.status(200).json(result);
+});
+
 // PUT /update/:id/title
 exports.updateUserTitle = asyncHandler(async (req, res) => {
     const { id } = req.params;
@@ -84,4 +101,52 @@ exports.removeFcmToken = asyncHandler(async (req, res) => {
     const { token } = req.body;
     await userService.removeFcmToken(req.user, token);
     res.status(200).json({ message: "FCM token removed successfully." });
+});
+
+// POST /bulk-insert
+exports.bulkInsertUsers = asyncHandler(async (req, res) => {
+    const { users } = req.body;
+    if (!users || !Array.isArray(users)) {
+        return res.status(400).json({ message: "Invalid payload. Expected 'users' array." });
+    }
+
+    const result = await userService.bulkInsertUsers(req.user, users);
+    res.status(200).json({
+        message: "Bulk insert completed.",
+        result
+    });
+});
+
+// POST /users/:userid/transfer-party
+exports.transferParty = asyncHandler(async (req, res) => {
+    const { userid } = req.params;
+    const { newPartyName, newAdminId } = req.body;
+    
+    if (!newPartyName) {
+        return res.status(400).json({ message: "newPartyName is required." });
+    }
+
+    const updatedUser = await userService.transferParty(req.user, userid, newPartyName, newAdminId);
+    
+    res.status(200).json({ 
+        message: "User transferred to new party successfully.",
+        user: updatedUser
+    });
+});
+
+// POST /users/:userid/transfer-jamaat
+exports.transferJamaat = asyncHandler(async (req, res) => {
+    const { userid } = req.params;
+    const { newTenantId, newPartyName, newAdminId } = req.body;
+    
+    if (!newTenantId) {
+        return res.status(400).json({ message: "newTenantId is required." });
+    }
+
+    const updatedUser = await userService.transferJamaat(req.user, userid, newTenantId, newPartyName, newAdminId);
+    
+    res.status(200).json({ 
+        message: "User transferred to new Jamaat successfully.",
+        user: updatedUser
+    });
 });

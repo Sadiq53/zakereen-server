@@ -1,5 +1,5 @@
 const VocalSession = require('../models/vocalSession');
-const AppError = require('../utils/appError');
+const AppError = require('../utils/AppError');
 
 exports.createSession = async (data) => {
     const newSession = new VocalSession(data);

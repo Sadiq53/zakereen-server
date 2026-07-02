@@ -10,11 +10,27 @@ const {
     updateOccasionSchema,
     updateAttendanceSchema
 } = require('../validators/occasionValidators');
+const AppError = require('../utils/AppError');
 
-const upload = multer({ storage: multer.memoryStorage() });
+const upload = multer({ 
+    storage: multer.memoryStorage(),
+    limits: {
+        fileSize: 5 * 1024 * 1024, // 5MB limit
+    },
+    fileFilter: (req, file, cb) => {
+        if (file.mimetype.startsWith('image/')) {
+            cb(null, true);
+        } else {
+            cb(new AppError('Invalid file type. Only images are allowed.', 400), false);
+        }
+    }
+});
 
 // POST /create — Create occasion (admin/superadmin only)
 router.post('/create', authAdmin, resolveTenant, validateRequest({ body: createOccasionSchema }), occasionController.createOccasion);
+
+// POST /create-past — Create past occasion without side effects (admin/superadmin only)
+router.post('/create-past', authAdmin, resolveTenant, validateRequest({ body: createOccasionSchema }), occasionController.createPastOccasion);
 
 // PATCH /update/:id — Update occasion (admin/superadmin/groupadmin)
 router.patch('/update/:id', authGroup, resolveTenant, validateRequest({ body: updateOccasionSchema }), occasionController.updateOccasion);

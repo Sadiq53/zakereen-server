@@ -16,8 +16,10 @@ exports.createLocation = asyncHandler(async (req, res) => {
         throw new AppError('Name, latitude, and longitude are required', 400);
     }
 
+    const targetTenantId = req.isRootAdmin ? (req.body.tenantId || req.tenantId || req.userTenantId) : req.tenantId;
+
     const location = await SavedLocation.create({
-        tenantId: req.tenantId,
+        tenantId: targetTenantId,
         name,
         address,
         latitude,

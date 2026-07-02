@@ -55,6 +55,8 @@ typings/
 .env
 .env.test
 .env.local
+.env.prod
+.env.dev
 .env.*
 !.env.example
 

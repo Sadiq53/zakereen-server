@@ -1,4 +1,3 @@
-const admin = require('../config/firebaseAdmin');
 const userClient = require('../models/users');
 
 /**
@@ -52,8 +51,12 @@ async function getTenantTokens(tenantId, excludeUserId = null) {
  * @param {string} body - Notification body
  * @param {object} dataPayload - Scalable data payload
  */
-async function sendMulticastNotification(tokens, title, body, dataPayload) {
-    if (!admin.apps.length || !tokens || tokens.length === 0) return;
+async function sendMulticastNotification(rawTokens, title, body, dataPayload) {
+    const admin = require('../config/firebaseAdmin');
+    if (!admin || !admin.apps.length || !rawTokens || rawTokens.length === 0) return;
+
+    // Deduplicate tokens to prevent multiple notifications to the same device
+    const tokens = [...new Set(rawTokens)];
 
     // FCM has a 500 token limit per multicast call — batch if needed
     const BATCH_SIZE = 500;

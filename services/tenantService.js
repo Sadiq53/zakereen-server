@@ -9,12 +9,16 @@ const { hashPassword } = require('../middlewares/auth');
 const cacheService = require('./cacheService');
 const { getIO } = require('../config/socket');
 
-function emitGlobalTenantUpdate() {
+async function emitGlobalTenantUpdate() {
     try {
+        if (cacheService && cacheService.invalidateGlobal) {
+            await cacheService.invalidateGlobal();
+        }
+        
         const io = getIO();
         io.emit('tenantUpdated'); // generic broadcast signal
     } catch (err) {
-        console.warn('Socket not initialized, could not emit event');
+        console.warn('Socket or Cache error during global update:', err.message);
     }
 }
 
@@ -59,7 +63,8 @@ exports.assignCoordinator = async (tenantId, coordinatorData) => {
 
     if (user) {
         // If the user is a rootadmin, we don't modify their role or tenantId, 
-        // they can still be linked as the coordinator.
+        // wait, we DO want to modify their tenantId so they have a home Jamaat.
+        // We just don't modify their role!
         if (user.role !== 'rootadmin') {
             user.role = 'superadmin';
         }
@@ -78,6 +83,7 @@ exports.assignCoordinator = async (tenantId, coordinatorData) => {
             address: address || '',
             role: 'superadmin',
             userpass: hashedPass,
+            mustChangePassword: true,
             createdat: new Date(),
             updatedat: new Date(),
         });
@@ -177,40 +183,71 @@ exports.deleteTenant = async (id) => {
 };
 
 /**
- * Fetch all tenants with aggregated mass-analytics
+ * Fetch all tenants with aggregated mass-analytics.
+ * Optimized: uses batch aggregations instead of per-tenant queries.
  */
 exports.getAllTenantsAnalytics = async () => {
     const tenants = await Tenant.find({ status: { $ne: 'deleted' } }).lean();
-    const results = [];
+    if (tenants.length === 0) return [];
 
-    // Ideally we can do a massive aggregate, but for now concurrent promises works given small N
-    await Promise.all(tenants.map(async (t) => {
-        const tenantId = t._id;
-        const [userCount, occasionCount, groupCount, attendanceCount, participationAgg] = await Promise.all([
-            User.countDocuments({ tenantId, role: { $ne: 'rootadmin' } }),
-            Occasion.countDocuments({ tenantId }),
-            Group.countDocuments({ tenantId }),
-            Attendance.countDocuments({ tenantId, status: 'present' }),
-            Occasion.aggregate([
-                { $match: { tenantId: tenantId } },
-                { $unwind: "$events" },
-                { $match: { "events.party": { $ne: null }, "events.party": { $ne: "" } } },
-                { $group: { _id: { occasionId: "$_id", partyId: "$events.party" } } },
-                { $count: "uniqueParticipations" }
-            ])
-        ]);
+    const tenantIds = tenants.map(t => t._id);
+
+    // Batch all counts across tenants in parallel (4 queries total, not 5×N)
+    const [userAgg, occasionAgg, groupAgg, attendanceAgg, participationAgg] = await Promise.all([
+        User.aggregate([
+            { $match: { tenantId: { $in: tenantIds } } },
+            { $group: { _id: '$tenantId', count: { $sum: 1 } } }
+        ]),
+        Occasion.aggregate([
+            { $match: { tenantId: { $in: tenantIds } } },
+            { $group: { _id: '$tenantId', count: { $sum: 1 } } }
+        ]),
+        Group.aggregate([
+            { $match: { tenantId: { $in: tenantIds } } },
+            { $group: { _id: '$tenantId', count: { $sum: 1 } } }
+        ]),
+        Attendance.aggregate([
+            { $match: { tenantId: { $in: tenantIds }, status: 'present' } },
+            { $group: { _id: '$tenantId', count: { $sum: 1 } } }
+        ]),
+        Occasion.aggregate([
+            { $match: { tenantId: { $in: tenantIds } } },
+            { $unwind: '$events' },
+            { $match: { 'events.party': { $ne: null, $ne: '' } } },
+            { $group: { _id: { tenantId: '$tenantId', occasionId: '$_id', partyId: '$events.party' } } },
+            { $group: { _id: '$_id.tenantId', uniqueParticipations: { $sum: 1 } } }
+        ])
+    ]);
+
+    // Build lookup maps
+    const toMap = (agg) => agg.reduce((acc, item) => { acc[item._id.toString()] = item.count; return acc; }, {});
+    const userMap = toMap(userAgg);
+    const occasionMap = toMap(occasionAgg);
+    const groupMap = toMap(groupAgg);
+    const attendanceMap = toMap(attendanceAgg);
+    const participationMap = participationAgg.reduce((acc, item) => {
+        acc[item._id.toString()] = item.uniqueParticipations;
+        return acc;
+    }, {});
+
+    // Assemble results
+    return tenants.map(t => {
+        const tid = t._id.toString();
+        const userCount = userMap[tid] || 0;
+        const occasionCount = occasionMap[tid] || 0;
+        const groupCount = groupMap[tid] || 0;
+        const attendanceCount = attendanceMap[tid] || 0;
+        const uniqueParticipations = participationMap[tid] || 0;
 
         const maxPotentialAttendance = userCount * occasionCount;
-        const avgAttendanceRatio = maxPotentialAttendance > 0 
+        const avgAttendanceRatio = maxPotentialAttendance > 0
             ? ((attendanceCount / maxPotentialAttendance) * 100)
             : 0;
-
-        const uniqueParticipations = participationAgg.length > 0 ? participationAgg[0].uniqueParticipations : 0;
         const avgParticipationRatio = (occasionCount > 0 && groupCount > 0)
             ? ((uniqueParticipations / (occasionCount * groupCount)) * 100)
             : 0;
 
-        results.push({
+        return {
             tenantId: t._id,
             name: t.name,
             userCount,
@@ -219,10 +256,8 @@ exports.getAllTenantsAnalytics = async () => {
             maxPotentialAttendance,
             avgAttendanceRatio: parseFloat(avgAttendanceRatio.toFixed(1)),
             avgParticipationRatio: parseFloat(avgParticipationRatio.toFixed(1))
-        });
-    }));
-
-    return results;
+        };
+    });
 };
 
 /**
@@ -237,7 +272,7 @@ exports.getTenantStats = async (tenantId) => {
     const tenantObjectId = new mongoose.Types.ObjectId(tenantId);
 
     const [userCount, occasionCount, groupCount, attendanceCount, partyAgg, participationAgg, attendeeAgg] = await Promise.all([
-        User.countDocuments({ tenantId, role: { $ne: 'rootadmin' } }),
+        User.countDocuments({ tenantId }),
         Occasion.countDocuments({ tenantId }),
         Group.countDocuments({ tenantId }),
         Attendance.countDocuments({ tenantId, status: 'present' }),
@@ -246,22 +281,45 @@ exports.getTenantStats = async (tenantId) => {
         Occasion.aggregate([
             { $match: { tenantId: tenantObjectId } },
             { $unwind: "$events" },
-            { $group: {
-                _id: "$events.party",
-                count: { $sum: 1 }
+            { $match: { "events.party": { $ne: null }, "events.party": { $ne: "" } } },
+            { $addFields: { 
+                partyObjectId: { 
+                    $convert: { input: "$events.party", to: "objectId", onError: null, onNull: null } 
+                } 
             }},
-            { $match: { _id: { $ne: null }, _id: { $ne: "" } } },
-            { $addFields: { partyObjectId: { $toObjectId: "$_id" } } },
             { $lookup: {
                 from: "groups",
                 localField: "partyObjectId",
                 foreignField: "_id",
                 as: "partyData"
             }},
-            { $unwind: { path: "$partyData", preserveNullAndEmptyArrays: true } },
+            { $addFields: {
+                resolvedPartyName: {
+                    $toLower: {
+                        $cond: [
+                            { $gt: [{ $size: "$partyData" }, 0] }, 
+                            { $arrayElemAt: ["$partyData.name", 0] }, 
+                            "$events.party"
+                        ]
+                    }
+                },
+                originalResolvedName: {
+                    $cond: [
+                        { $gt: [{ $size: "$partyData" }, 0] }, 
+                        { $arrayElemAt: ["$partyData.name", 0] }, 
+                        "$events.party"
+                    ]
+                }
+            }},
+            { $group: {
+                _id: "$resolvedPartyName",
+                partyName: { $first: "$originalResolvedName" },
+                count: { $sum: 1 }
+            }},
             { $project: {
-                partyId: "$_id",
-                partyName: { $ifNull: ["$partyData.name", "Unknown Party"] },
+                _id: 0,
+                partyId: "$partyName",
+                partyName: 1,
                 count: 1
             }},
             { $sort: { count: -1 } },
@@ -365,7 +423,7 @@ exports.getGlobalStats = async () => {
             { $match: { status: { $ne: 'deleted' } } },
             { $group: { _id: '$status', count: { $sum: 1 } } },
         ]),
-        User.countDocuments({ role: { $ne: 'rootadmin' } }),
+        User.countDocuments({}),
         Occasion.countDocuments(),
         
         // Overall attendance calculation
@@ -380,10 +438,12 @@ exports.getGlobalStats = async () => {
         Occasion.aggregate([
             { $unwind: "$events" },
             { $group: {
-                _id: "$events.name",
+                _id: { $toLower: "$events.name" },
+                originalName: { $first: "$events.name" },
                 count: { $sum: 1 }
             }},
             { $match: { _id: { $ne: null }, _id: { $ne: "" } } },
+            { $project: { _id: "$originalName", count: 1 } },
             { $sort: { count: -1 } },
             { $limit: 5 }
         ]),
@@ -391,22 +451,45 @@ exports.getGlobalStats = async () => {
         // Top 5 Parties across the platform
         Occasion.aggregate([
             { $unwind: "$events" },
-            { $group: {
-                _id: "$events.party",
-                count: { $sum: 1 }
+            { $match: { "events.party": { $ne: null }, "events.party": { $ne: "" } } },
+            { $addFields: { 
+                partyObjectId: { 
+                    $convert: { input: "$events.party", to: "objectId", onError: null, onNull: null } 
+                } 
             }},
-            { $match: { _id: { $ne: null }, _id: { $ne: "" } } },
-            { $addFields: { partyObjectId: { $toObjectId: "$_id" } } },
             { $lookup: {
                 from: "groups",
                 localField: "partyObjectId",
                 foreignField: "_id",
                 as: "partyData"
             }},
-            { $unwind: { path: "$partyData", preserveNullAndEmptyArrays: true } },
+            { $addFields: {
+                resolvedPartyName: {
+                    $toLower: {
+                        $cond: [
+                            { $gt: [{ $size: "$partyData" }, 0] }, 
+                            { $arrayElemAt: ["$partyData.name", 0] }, 
+                            "$events.party"
+                        ]
+                    }
+                },
+                originalResolvedName: {
+                    $cond: [
+                        { $gt: [{ $size: "$partyData" }, 0] }, 
+                        { $arrayElemAt: ["$partyData.name", 0] }, 
+                        "$events.party"
+                    ]
+                }
+            }},
+            { $group: {
+                _id: "$resolvedPartyName",
+                partyName: { $first: "$originalResolvedName" },
+                count: { $sum: 1 }
+            }},
             { $project: {
-                partyId: "$_id",
-                partyName: { $ifNull: ["$partyData.name", "Unknown Party"] },
+                _id: 0,
+                partyId: "$partyName",
+                partyName: 1,
                 count: 1
             }},
             { $sort: { count: -1 } },
@@ -478,42 +561,56 @@ exports.getGlobalStats = async () => {
 
 /**
  * Fetch Miqaat (Occasion) history for a specific Jamaat/Tenant.
+ * Optimized: batches attendance stats and group lookups to avoid N+1 queries.
  */
 exports.getTenantMiqaats = async (tenantId, limit = 5) => {
     const cacheKey = `miqaats:tenant:v1:${tenantId}:${limit}`;
     const cached = await cacheService.get(cacheKey);
     if (cached) return cached;
 
-    // We can fetch occasions and manually inject attendance stats for each
+    // 1. Fetch occasions
     const miqaats = await Occasion.find({ tenantId })
-        .select('_id name start_at ends_at locationName created_by events images tenantId') // Explicitly select images and created_by
-        .populate('created_by', 'name')
+        .select('_id name start_at ends_at locationName created_by events images tenantId')
         .sort({ start_at: -1 })
         .limit(limit)
         .lean();
 
-    // Attach basic attendance stats to each Miqaat for the cards
-    const enhancedMiqaats = await Promise.all(miqaats.map(async (m) => {
-        const [uniquePresentUsers, totalExpected] = await Promise.all([
-            Attendance.distinct('user', { occasion: m._id, status: 'present' }),
-            User.countDocuments({ tenantId, role: { $ne: 'rootadmin' } })
-        ]);
-        
-        let totalPresent = uniquePresentUsers.length;
-        if (totalPresent > totalExpected && totalExpected > 0) totalPresent = totalExpected; // Failsafe
-        
+    if (miqaats.length === 0) {
+        await cacheService.set(cacheKey, [], 300);
+        return [];
+    }
+
+    // 2. Single query: total expected users (same for all Miqaats in this tenant)
+    const totalExpected = await User.countDocuments({ tenantId });
+
+    // 3. Single aggregation: attendance counts for all fetched Miqaats at once
+    const miqaatIds = miqaats.map(m => m._id);
+    const attendanceAgg = await Attendance.aggregate([
+        { $match: { occasion: { $in: miqaatIds }, status: 'present' } },
+        { $group: { _id: '$occasion', presentUsers: { $addToSet: '$user' } } },
+        { $project: { _id: 1, presentCount: { $size: '$presentUsers' } } }
+    ]);
+    const attendanceMap = attendanceAgg.reduce((acc, a) => {
+        acc[a._id.toString()] = a.presentCount;
+        return acc;
+    }, {});
+
+    // 4. Single query: pre-load all groups for party name resolution
+    const allGroups = await Group.find({ tenantId }, '_id name').lean();
+    const groupMap = allGroups.reduce((acc, g) => {
+        acc[g._id.toString()] = g.name;
+        return acc;
+    }, {});
+
+    // 5. Assemble results (zero additional DB queries)
+    const enhancedMiqaats = miqaats.map(m => {
+        let totalPresent = attendanceMap[m._id.toString()] || 0;
+
         const attendanceRatio = totalExpected > 0 ? ((totalPresent / totalExpected) * 100).toFixed(1) : 0;
-        
-        // Populate party names for events
-        const enhancedEvents = await Promise.all((m.events || []).map(async (ev) => {
-            let partyName = ev.party;
-            if (ev.party) {
-                try {
-                    const partyDoc = await Group.findById(ev.party).select('name').lean();
-                    if (partyDoc && partyDoc.name) partyName = partyDoc.name;
-                } catch (e) {} // Safe catch for cast errors
-            }
-            return { ...ev, partyName };
+
+        const enhancedEvents = (m.events || []).map(ev => ({
+            ...ev,
+            partyName: ev.party ? (groupMap[ev.party] || ev.party) : ev.party
         }));
 
         return {
@@ -525,9 +622,20 @@ exports.getTenantMiqaats = async (tenantId, limit = 5) => {
                 ratio: parseFloat(attendanceRatio)
             }
         };
-    }));
+    });
 
     await cacheService.set(cacheKey, enhancedMiqaats, 300);
 
     return enhancedMiqaats;
+};
+
+/**
+ * Invalidate tenant and global stats caches when data changes.
+ */
+exports.invalidateTenantStats = async (tenantId) => {
+    if (tenantId) {
+        await cacheService.del(`stats:tenant:v2:${tenantId}`);
+        await cacheService.del(`miqaats:tenant:v1:${tenantId}:5`);
+    }
+    await cacheService.del('stats:global:v2');
 };

@@ -1,4 +1,4 @@
-const redisClient = require('../config/redis');
+const { cacheClient: redisClient } = require('../config/redis');
 
 class CacheService {
     async get(key) {
@@ -7,7 +7,7 @@ class CacheService {
             const data = await redisClient.get(key);
             return data ? JSON.parse(data) : null;
         } catch (error) {
-            console.error(`Redis GET error for key ${key}:`, error);
+            console.error(`Redis GET error for key ${key}:`, error.message);
             return null;
         }
     }
@@ -17,44 +17,43 @@ class CacheService {
         try {
             await redisClient.setex(key, ttlSeconds, JSON.stringify(data));
         } catch (error) {
-            console.error(`Redis SET error for key ${key}:`, error);
+            console.error(`Redis SET error for key ${key}:`, error.message);
         }
     }
 
-    async invalidatePattern(pattern) {
+    /**
+     * Deterministic cache invalidation for a tenant.
+     * Deletes known cache keys by name instead of using SCAN.
+     * 
+     * IMPORTANT: If you add new cache keys in tenant/stats services,
+     * add them to the TENANT_KEY_TEMPLATES array below.
+     */
+    async invalidateTenant(tenantId) {
+        if (!redisClient || !tenantId) return;
+        try {
+            const keys = [
+                `stats:tenant:v2:${tenantId}`,
+                `miqaats:tenant:v1:${tenantId}:5`,
+                `miqaats:tenant:v1:${tenantId}:10`,
+                `miqaats:tenant:v1:${tenantId}:20`,
+            ];
+            await redisClient.del(...keys);
+        } catch (error) {
+            console.error(`Redis tenant invalidation error for ${tenantId}:`, error.message);
+        }
+    }
+
+    /**
+     * Deterministic global cache invalidation.
+     * Deletes the known global stats cache key.
+     */
+    async invalidateGlobal() {
         if (!redisClient) return;
         try {
-            let cursor = '0';
-            const keysToDelete = [];
-            do {
-                const [newCursor, keys] = await redisClient.scan(cursor, 'MATCH', pattern, 'COUNT', 100);
-                cursor = newCursor;
-                if (keys.length > 0) {
-                    keysToDelete.push(...keys);
-                }
-            } while (cursor !== '0');
-
-            if (keysToDelete.length > 0) {
-                await redisClient.del(...keysToDelete);
-                console.log(`[CacheService] Invalidated ${keysToDelete.length} keys matching pattern: ${pattern}`);
-            }
+            await redisClient.del('stats:global:v2');
         } catch (error) {
-            console.error(`Redis pattern invalidation error for ${pattern}:`, error);
+            console.error(`Redis global invalidation error:`, error.message);
         }
-    }
-
-    async invalidateTenant(tenantId) {
-        if (!tenantId) return;
-        console.log(`[CacheService] Busting cache for tenant: ${tenantId}`);
-        // Invalidate tenant stats
-        await this.invalidatePattern(`stats:tenant:*:${tenantId}*`);
-        // Invalidate miqaat lists
-        await this.invalidatePattern(`miqaats:tenant:*:${tenantId}*`);
-    }
-
-    async invalidateGlobal() {
-        console.log(`[CacheService] Busting global cache`);
-        await this.invalidatePattern(`stats:global:*`);
     }
 }
 
