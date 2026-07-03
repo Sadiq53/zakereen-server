@@ -10,7 +10,7 @@ exports.createUserSchema = z.object({
     fullname: z.string().min(1, 'Full name is required'),
     phone: z.coerce.string().optional(),
     userid: z.coerce.string().min(1, 'User ID is required'),
-    role: z.enum(ALL_ROLES, { errorMap: () => ({ message: `Role must be one of: ${ALL_ROLES.join(', ')}` }) }),
+    role: z.enum(ALL_ROLES, { errorMap: () => ({ message: `Role must be one of: ${ALL_ROLES.join(', ')}` }) }).optional().default('member'),
     title: z.string().min(1, 'Title is required'),
     belongsto: z.string().optional(),
     grade: z.string().optional(),

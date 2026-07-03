@@ -255,6 +255,7 @@ exports.loginUser = async (userid, userpass) => {
 };
 
 exports.createUser = async (creator, userData) => {
+    if (!userData.role) userData.role = 'member';
     let { fullname, phone, userid, belongsto, role, title } = userData;
 
     if (!ALL_ROLES.includes(role)) {
@@ -274,8 +275,8 @@ exports.createUser = async (creator, userData) => {
         throw new AppError("You cannot create a user with a role equal to or higher than your own.", 403);
     }
 
-    if (!fullname || !phone || !userid || !role || !title) {
-        throw new AppError("All required fields (fullname, phone, userid, role, title) must be provided.", 400);
+    if (!fullname || !userid || !title) {
+        throw new AppError("All required fields (fullname, userid, title) must be provided.", 400);
     }
 
     let tenantId = creator.tenantId;
