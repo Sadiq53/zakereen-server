@@ -281,9 +281,14 @@ exports.createUser = async (creator, userData) => {
     let tenantId = creator.tenantId;
     if (creator.role === 'rootadmin') {
         if (!userData.tenantId) {
-            throw new AppError('Root admin must specify a tenantId when creating users.', 400);
+            if (creator.tenantId) {
+                tenantId = creator.tenantId;
+            } else {
+                throw new AppError('Root admin must specify a tenantId when creating users.', 400);
+            }
+        } else {
+            tenantId = userData.tenantId;
         }
-        tenantId = userData.tenantId;
     } else if (userData.tenantId && String(userData.tenantId) !== String(creator.tenantId)) {
         throw new AppError("You cannot create a user in a different Jamaat.", 403);
     }
