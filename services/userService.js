@@ -309,9 +309,14 @@ exports.createUser = async (creator, userData) => {
         throw new AppError("A user with this userid already exists on the platform. Userid must be globally unique.", 400);
     }
 
+    const orConditions = [{ fullname }];
+    if (phone) {
+        orConditions.push({ phone });
+    }
+
     const existingUser = await userClient.findOne({
         tenantId,
-        $or: [{ fullname }, { phone }]
+        $or: orConditions
     });
 
     if (existingUser) {
