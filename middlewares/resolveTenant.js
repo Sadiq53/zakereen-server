@@ -18,10 +18,22 @@ const resolveTenant = async (req, res, next) => {
         throw new AppError('Authentication required before tenant resolution.', 401);
     }
 
-    // Root admin operates globally
+    // Root admin operates globally or on specific tenants
     if (user.role === 'rootadmin') {
         // Root admin can optionally target a specific tenant via header or query
         let targetTenantId = req.headers['x-tenant-id'] || req.query.tenantId || null;
+        let isCrossTenant = false;
+
+        // "global" or "all" keyword explicitly requests cross-tenant view
+        if (targetTenantId === 'global' || targetTenantId === 'all') {
+            targetTenantId = null;
+            isCrossTenant = true;
+        } else if (!targetTenantId) {
+            // Default to their own tenant if no explicit scope is given (for mobile app)
+            targetTenantId = user.tenantId || null;
+            // Only cross-tenant if they don't even have their own tenant
+            isCrossTenant = targetTenantId === null; 
+        }
 
         if (targetTenantId) {
             const tenant = await Tenant.findById(targetTenantId).lean();
@@ -33,6 +45,7 @@ const resolveTenant = async (req, res, next) => {
         req.tenantId = targetTenantId;
         req.userTenantId = user.tenantId || null;
         req.isRootAdmin = true;
+        req.isCrossTenant = isCrossTenant;
         return next();
     }
 

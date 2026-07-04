@@ -1,9 +1,17 @@
 const allowedTypes = [
+    "dua",
+    "ilteja",
     "madeh",
-    "salam",
-    "rasa",
+    "manqabat",
+    "manzumaat",
+    "munajaat",
+    "naat",
+    "nasheed",
+    "nasihat",
     "noha",
-    "na'at"
+    "qasida",
+    "risa",
+    "salam"
 ]
 
 // Role hierarchy: higher number = higher privilege

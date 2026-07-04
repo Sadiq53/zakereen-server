@@ -1,10 +1,11 @@
 const SavedLocation = require('../models/savedLocation');
 const asyncHandler = require('express-async-handler');
 const AppError = require('../utils/AppError');
+const { resolveWriteTenant, tenantQuery } = require('../utils/tenantScope');
 
 // GET /locations
 exports.getLocations = asyncHandler(async (req, res) => {
-    const locations = await SavedLocation.find({ tenantId: req.tenantId }).sort({ name: 1 });
+    const locations = await SavedLocation.find(tenantQuery(req.tenantId)).sort({ name: 1 });
     res.status(200).json(locations);
 });
 
@@ -16,7 +17,7 @@ exports.createLocation = asyncHandler(async (req, res) => {
         throw new AppError('Name, latitude, and longitude are required', 400);
     }
 
-    const targetTenantId = req.isRootAdmin ? (req.body.tenantId || req.tenantId || req.userTenantId) : req.tenantId;
+    const targetTenantId = resolveWriteTenant(req);
 
     const location = await SavedLocation.create({
         tenantId: targetTenantId,

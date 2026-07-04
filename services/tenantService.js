@@ -635,8 +635,7 @@ exports.getTenantMiqaats = async (tenantId, limit = 5) => {
  */
 exports.invalidateTenantStats = async (tenantId) => {
     if (tenantId) {
-        await cacheService.del(`stats:tenant:v2:${tenantId}`);
-        await cacheService.del(`miqaats:tenant:v1:${tenantId}:5`);
+        await cacheService.invalidateTenant(tenantId);
     }
-    await cacheService.del('stats:global:v2');
+    await cacheService.invalidateGlobal();
 };

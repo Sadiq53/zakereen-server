@@ -4,6 +4,7 @@ const User = require('../models/users');
 const Group = require('../models/group');
 const mongoose = require('mongoose');
 const AppError = require('../utils/AppError');
+const { tenantQuery, tenantMatch } = require('../utils/tenantScope');
 
 
 // --- String Matching Algorithms for Kalam Analytics ---
@@ -54,7 +55,7 @@ const calculateSimilarity = (str1, str2) => {
 // ---------------------------------------------------
 
 exports.getAttendanceAnalytics = async (tenantId, user, startDate, endDate) => {
-    let matchStage = { tenantId: new mongoose.Types.ObjectId(tenantId) };
+    let matchStage = tenantMatch(tenantId);
 
     if (startDate && endDate) {
         matchStage.createdAt = {
@@ -134,7 +135,7 @@ exports.getAttendanceAnalytics = async (tenantId, user, startDate, endDate) => {
 
 exports.getKalamAnalytics = async (tenantId) => {
     const pipeline = [
-        { $match: { tenantId: new mongoose.Types.ObjectId(tenantId) } },
+        { $match: tenantMatch(tenantId) },
         { $unwind: "$events" },
         {
             $group: {
@@ -196,15 +197,15 @@ exports.getKalamAnalytics = async (tenantId) => {
 };
 
 exports.getPartyAnalytics = async (tenantId) => {
-    const totalGlobalOccasions = await Occasions.countDocuments({ tenantId, status: "ended" });
-    const allGroups = await Group.find({ tenantId }, '_id name').lean();
+    const totalGlobalOccasions = await Occasions.countDocuments(tenantQuery(tenantId, { status: "ended" }));
+    const allGroups = await Group.find(tenantQuery(tenantId), '_id name').lean();
     const groupMap = allGroups.reduce((acc, g) => {
         acc[g._id.toString()] = g.name;
         return acc;
     }, {});
     
     const pipeline = [
-        { $match: { tenantId: new mongoose.Types.ObjectId(tenantId), status: "ended" } },
+        { $match: tenantMatch(tenantId, { status: "ended" }) },
         { $unwind: "$events" },
         { $match: { "events.party": { $ne: null, $ne: "" } } },
         {
@@ -266,7 +267,7 @@ exports.getPartyAnalytics = async (tenantId) => {
 };
 
 exports.getOverviewAnalytics = async (tenantId) => {
-    const lastOccasion = await Occasions.findOne({ tenantId, status: "ended" }).sort({ start_at: -1 }).lean();
+    const lastOccasion = await Occasions.findOne(tenantQuery(tenantId, { status: "ended" })).sort({ start_at: -1 }).lean();
     
     if (!lastOccasion) {
         return { message: "No completed occasions found" };
@@ -282,7 +283,7 @@ exports.getOverviewAnalytics = async (tenantId) => {
         }
     ]);
 
-    const allGroups = await Group.find({ tenantId }, '_id name').lean();
+    const allGroups = await Group.find(tenantQuery(tenantId), '_id name').lean();
     const groupMap = allGroups.reduce((acc, g) => {
         acc[g._id.toString()] = g.name;
         return acc;
@@ -311,7 +312,7 @@ exports.getUserAnalytics = async (tenantId, userid) => {
     const query = {
         $or: isObjectId ? [{ _id: userid }, { userid: String(userid) }] : [{ userid: String(userid) }]
     };
-    if (tenantId) query.tenantId = tenantId;
+    Object.assign(query, tenantQuery(tenantId));
 
     const targetUser = await User.findOne(query);
     
@@ -344,12 +345,12 @@ exports.getUserAnalytics = async (tenantId, userid) => {
     let partyName = targetUser.belongsto;
 
     if (partyName) {
-        const group = await Group.findOne({ tenantId, name: partyName }).lean();
+        const group = await Group.findOne(tenantQuery(tenantId, { name: partyName })).lean();
         if (group) {
-            const totalGlobalOccasions = await Occasions.countDocuments({ tenantId, status: "ended" });
+            const totalGlobalOccasions = await Occasions.countDocuments(tenantQuery(tenantId, { status: "ended" }));
             
             const partyOccasions = await Occasions.aggregate([
-                { $match: { tenantId: new mongoose.Types.ObjectId(tenantId), status: "ended" } },
+                { $match: tenantMatch(tenantId, { status: "ended" }) },
                 { $unwind: "$events" },
                 { $match: { "events.party": group._id.toString() } },
                 {

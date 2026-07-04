@@ -8,13 +8,14 @@ const AppError = require('../utils/AppError');
 const { emitUserCreated, emitUserUpdated, emitUserDeleted, emitGroupUpdated } = require('../utils/socketEmit');
 const auditService = require('./auditService');
 const { invalidateTenantStats } = require('./tenantService');
+const { tenantQuery, tenantMatch } = require('../utils/tenantScope');
 
 exports.getMe = async (user) => {
     return user;
 };
 
 exports.getAllUsers = async (tenantId) => {
-    const query = tenantId ? { tenantId } : {};
+    const query = tenantQuery(tenantId);
     return await userClient.find(query).select('-attendence');
 };
 
@@ -22,10 +23,7 @@ exports.fetchPaginatedUsers = async (tenantId, options) => {
     const { page = 1, limit = 20, search, jamaat, role, sort, party } = options;
     const skip = (page - 1) * limit;
 
-    const matchStage = {};
-    if (tenantId) {
-        matchStage.tenantId = new mongoose.Types.ObjectId(tenantId);
-    }
+    const matchStage = tenantMatch(tenantId);
 
     if (search) {
         matchStage.$or = [
@@ -144,7 +142,7 @@ exports.updateUserTitle = async (id, title, caller) => {
 };
 
 exports.getUserById = async (tenantId, id) => {
-    const query = tenantId ? { _id: id, tenantId } : { _id: id };
+    const query = tenantQuery(tenantId, { _id: id });
     const user = await userClient.findOne(query);
     if (!user) {
         throw new AppError("User not found.", 404);
@@ -153,12 +151,12 @@ exports.getUserById = async (tenantId, id) => {
 };
 
 exports.getUserCount = async (tenantId) => {
-    const query = tenantId ? { tenantId } : {};
+    const query = tenantQuery(tenantId);
     return await userClient.countDocuments(query);
 };
 
 exports.getGroupUserCount = async (tenantId, groupName) => {
-    const query = tenantId ? { tenantId, belongsto: groupName } : { belongsto: groupName };
+    const query = tenantQuery(tenantId, { belongsto: groupName });
     return await userClient.countDocuments(query);
 };
 
@@ -219,8 +217,8 @@ exports.deleteUser = async (id, replacementAdminId, creator) => {
 
     invalidateTenantStats(userTenantId);
 
-    const updatedUsers = await userClient.find(creator.tenantId ? { tenantId: creator.tenantId } : {});
-    const updatedGroups = await groupClient.find(creator.tenantId ? { tenantId: creator.tenantId } : {});
+    const updatedUsers = await userClient.find(tenantQuery(creator.tenantId));
+    const updatedGroups = await groupClient.find(tenantQuery(creator.tenantId));
 
     return { user: updatedUsers, group: updatedGroups };
 };
@@ -382,7 +380,7 @@ exports.createUser = async (creator, userData) => {
 };
 
 exports.updateUser = async (updater, userid, updatePayload) => {
-    const query = updater.role === 'rootadmin' ? { userid } : { userid, tenantId: updater.tenantId };
+    const query = tenantQuery(updater.role === 'rootadmin' ? null : updater.tenantId, { userid });
     const userToUpdate = await userClient.findOne(query);
     if (!userToUpdate) {
         throw new AppError("User not found.", 404);

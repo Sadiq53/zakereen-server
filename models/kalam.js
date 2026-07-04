@@ -1,7 +1,6 @@
 const mongoose = require('mongoose');
 
 const kalamSchema = new mongoose.Schema({
-    // tenantId: { type: mongoose.Schema.Types.ObjectId, ref: 'Tenant', index: true },
     name: { type: String, required: true, trim: true, unique: true },
     type: { type: String, default: 'kalam' },
     createdat: { type: Date, default: Date.now },

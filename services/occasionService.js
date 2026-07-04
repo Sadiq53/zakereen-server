@@ -2,6 +2,7 @@ const occasionClient = require('../models/occassion');
 const Kalam = require('../models/kalam');
 const mongoose = require('mongoose');
 const { invalidateTenantStats } = require('./tenantService');
+const { tenantQuery, tenantMatch } = require('../utils/tenantScope');
 
 // ─── Islamic Calendar (replicated from mobile calendarUtils.ts) ──────
 const ISLAMIC_REF_DATE = new Date('2024-07-07');
@@ -544,7 +545,7 @@ exports.updateOccasion = async (caller, id, updateData) => {
 };
 
 exports.endOccasion = async (tenantId, id) => {
-    const query = tenantId ? { _id: id, tenantId } : { _id: id };
+    const query = tenantQuery(tenantId, { _id: id });
     const occasion = await occasionClient.findOne(query);
 
     if (!occasion) {
@@ -693,13 +694,13 @@ exports.updateAttendance = async (caller, id, updateData) => {
 };
 
 exports.deleteOccasion = async (tenantId, id) => {
-    const query = tenantId ? { _id: id, tenantId } : { _id: id };
+    const query = tenantQuery(tenantId, { _id: id });
     const result = await occasionClient.deleteOne(query);
     if (result.deletedCount === 0) {
         throw new AppError("Occasion not found.", 404);
     }
     
-    await attendanceClient.deleteMany(tenantId ? { occasion: id, tenantId } : { occasion: id });
+    await attendanceClient.deleteMany(tenantQuery(tenantId, { occasion: id }));
     
     // Cancel any scheduled background jobs
     await cancelOccasionJobs(id);
@@ -708,10 +709,7 @@ exports.deleteOccasion = async (tenantId, id) => {
 };
 
 exports.uploadImage = async (caller, id, fileBuffer) => {
-    const query = { _id: id };
-    if (caller.role !== 'rootadmin') {
-        query.tenantId = caller.tenantId;
-    }
+    const query = tenantQuery(caller.role === 'rootadmin' ? null : caller.tenantId, { _id: id });
 
     const occasion = await occasionClient.findOne(query);
 
@@ -750,16 +748,17 @@ exports.uploadImage = async (caller, id, fileBuffer) => {
 };
 
 exports.fetchAll = async (tenantId) => {
-    const query = tenantId ? { tenantId } : {};
+    const query = tenantQuery(tenantId);
     return await occasionClient.find(query);
 };
 
 exports.fetchPaginated = async (tenantId, page, limit) => {
     const skip = (page - 1) * limit;
+    const query = tenantQuery(tenantId);
 
     const [total, occasions] = await Promise.all([
-        occasionClient.countDocuments({ tenantId }),
-        occasionClient.find({ tenantId }).sort({ start_at: -1, _id: -1 }).skip(skip).limit(limit)
+        occasionClient.countDocuments(query),
+        occasionClient.find(query).sort({ start_at: -1, _id: -1 }).skip(skip).limit(limit)
     ]);
 
     const hasNextPage = total > skip + occasions.length;
@@ -776,7 +775,8 @@ exports.fetchPaginated = async (tenantId, page, limit) => {
 };
 
 exports.fetchById = async (tenantId, id) => {
-    const occasion = await occasionClient.findOne({ _id: id, tenantId });
+    const query = tenantQuery(tenantId, { _id: id });
+    const occasion = await occasionClient.findOne(query);
     if (!occasion) {
         throw new AppError("Occasion not found.", 404);
     }
@@ -793,10 +793,8 @@ exports.fetchByStatus = async (tenantId, statusRaw) => {
         status = status.split(',');
     }
 
-    return await occasionClient.find({
-        tenantId,
-        status: { $in: status }
-    });
+    const query = tenantQuery(tenantId, { status: { $in: status } });
+    return await occasionClient.find(query);
 };
 
 exports.fetchByDate = async (tenantId, date) => {
@@ -806,9 +804,7 @@ exports.fetchByDate = async (tenantId, date) => {
     const end = new Date(start);
     end.setDate(end.getDate() + 1);
 
-    const query = tenantId 
-        ? { tenantId, start_at: { $gte: start, $lt: end } } 
-        : { start_at: { $gte: start, $lt: end } };
+    const query = tenantQuery(tenantId, { start_at: { $gte: start, $lt: end } });
         
     return await occasionClient.find(query);
 };
@@ -820,9 +816,7 @@ exports.fetchByMonth = async (tenantId, monthString) => {
     const start = new Date(start_at.getFullYear(), start_at.getMonth(), 1);
     const end = new Date(start_at.getFullYear(), start_at.getMonth() + 1, 1);
     
-    const query = tenantId 
-        ? { tenantId, start_at: { $gte: start, $lt: end } } 
-        : { start_at: { $gte: start, $lt: end } };
+    const query = tenantQuery(tenantId, { start_at: { $gte: start, $lt: end } });
         
     return await occasionClient.find(query);
 };
@@ -834,16 +828,15 @@ exports.fetchByYear = async (tenantId, yearString) => {
     const start = new Date(year, 0, 1);
     const end = new Date(year + 1, 0, 1);
     
-    const query = tenantId 
-        ? { tenantId, start_at: { $gte: start, $lt: end } } 
-        : { start_at: { $gte: start, $lt: end } };
+    const query = tenantQuery(tenantId, { start_at: { $gte: start, $lt: end } });
         
     return await occasionClient.find(query);
 };
 
 exports.fetchGrouped = async (tenantId) => {
+    const matchStage = tenantMatch(tenantId);
     const results = await occasionClient.aggregate([
-        { $match: { tenantId: new (require("mongoose").Types.ObjectId)(tenantId) } },
+        { $match: matchStage },
         { $unwind: '$events' },
         {
             $group: {

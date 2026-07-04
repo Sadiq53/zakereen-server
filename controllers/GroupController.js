@@ -1,6 +1,7 @@
 const groupService = require('../services/groupService');
 const asyncHandler = require('express-async-handler');
 const AppError = require('../utils/AppError');
+const { resolveWriteTenant } = require('../utils/tenantScope');
 
 // GET /
 exports.getAllGroups = asyncHandler(async (req, res) => {
@@ -19,10 +20,7 @@ exports.getGroupById = asyncHandler(async (req, res) => {
 exports.createGroup = asyncHandler(async (req, res) => {
     const { name, adminId, userDetails, tenantId } = req.body;
     
-    let targetTenantId = req.tenantId;
-    if (req.isRootAdmin) {
-        targetTenantId = tenantId || req.tenantId || req.userTenantId;
-    }
+    const targetTenantId = resolveWriteTenant(req);
 
     if (!targetTenantId) {
         throw new AppError("Tenant ID is required to create a group.", 400);
