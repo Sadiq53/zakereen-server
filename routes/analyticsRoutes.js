@@ -19,4 +19,7 @@ router.get('/overview', verifyToken, resolveTenant, analyticsController.getOverv
 // GET /user/:userid — User-specific analytics
 router.get('/user/:userid', verifyToken, resolveTenant, analyticsController.getUserAnalytics);
 
+// GET /suggestions — Smart recitation suggestion engine (Tab 4)
+router.get('/suggestions', verifyToken, resolveTenant, analyticsController.getSuggestions);
+
 module.exports = router;

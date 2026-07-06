@@ -37,6 +37,13 @@ class CacheService {
                 `miqaats:tenant:v1:${tenantId}:5`,
                 `miqaats:tenant:v1:${tenantId}:10`,
                 `miqaats:tenant:v1:${tenantId}:20`,
+                // analyticsService results (Tab 1-4) — bust on any occasion/attendance/group write
+                `analytics:overview:v1:${tenantId}`,
+                `analytics:kalams:v1:${tenantId}`,
+                `analytics:attendance:v1:${tenantId}`,
+                `analytics:parties:v1:${tenantId}`,
+                `analytics:suggestions:v1:${tenantId}`,
+                `analytics:suggestions-stats:v1:${tenantId}`,
             ];
             await redisClient.del(...keys);
         } catch (error) {

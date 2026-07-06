@@ -4,9 +4,10 @@ exports.createGroupSchema = z.object({
     name: z.string().min(1, 'Group name is required'),
     adminId: z.string().optional(),
     userDetails: z.object({
-        fullname: z.string(),
+        fullname: z.string().min(1, 'Full name is required'),
+        title: z.string().min(1, 'Title is required'),
         phone: z.coerce.string().optional(),
-        userid: z.coerce.string(),
+        userid: z.coerce.string().min(1, 'ITS ID is required'),
         email: z.string().email().optional().or(z.literal('')),
         address: z.string().optional(),
     }).optional()

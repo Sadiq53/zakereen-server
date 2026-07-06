@@ -27,15 +27,17 @@ exports.createGroup = async (tenantId, name, adminId, userDetails) => {
 
     let existingUser = null;
     if (userDetails) {
-        existingUser = await userClient.findOne({
-            $or: [
-                { fullname: userDetails.fullname },
-                { phone: userDetails.phone },
-                { userid: userDetails.userid }
-            ]
-        });
+        // Duplicate check must be TENANT-SCOPED and only match on genuinely unique
+        // fields. `userid` (ITS id) is the real identifier; `phone` is matched only
+        // when actually provided (an empty/absent phone must NOT collide with other
+        // phone-less users). Full names legitimately repeat, so they are not matched.
+        const orConditions = [{ userid: userDetails.userid }];
+        if (userDetails.phone) {
+            orConditions.push({ phone: userDetails.phone });
+        }
+        existingUser = await userClient.findOne({ tenantId, $or: orConditions });
         if (existingUser) {
-            throw new AppError("User with the same fullname, phone, or userid already exists.", 400);
+            throw new AppError("A user with the same ITS ID or phone already exists.", 400);
         }
     }
 
@@ -58,9 +60,10 @@ exports.createGroup = async (tenantId, name, adminId, userDetails) => {
         const hashedPass = await hashPassword(String(userDetails.userid));
         const newUserPayload = {
             ...userDetails,
+            tenantId,
             belongsto: name,
             role: 'groupadmin',
-            title: 'tipper',
+            title: userDetails.title || 'Mulla', // respect the entered title (was hardcoded 'tipper')
             userpass: hashedPass,
         };
         createdUser = await userClient.create(newUserPayload);
